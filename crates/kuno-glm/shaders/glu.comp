@@ -1,6 +1,6 @@
 // Clamped SwiGLU: out[e n + i] = silu(min(gu[e 2n + i], limit)) * clamp(gu[e 2n + n + i],
 // -limit, limit) for `count` experts (gate then up, as one product's rows); limit <= 1e-6
-// means no clamp.
+// means no clamp. Past 65535 workgroups the grid continues on its second dimension.
 #version 460
 layout(local_size_x = 256) in;
 layout(set = 0, binding = 0) readonly buffer Gu { float gu[]; };
@@ -8,7 +8,7 @@ layout(set = 0, binding = 1) writeonly buffer Out { float o[]; };
 layout(push_constant) uniform Constants { uint n; float limit; uint count; } p;
 
 void main() {
-    uint t = gl_GlobalInvocationID.x;
+    uint t = gl_GlobalInvocationID.y * 65535u * 256u + gl_GlobalInvocationID.x;
     if (t >= p.n * p.count) return;
     uint e = t / p.n, i = t % p.n;
     float g = gu[e * 2 * p.n + i], u = gu[e * 2 * p.n + p.n + i];

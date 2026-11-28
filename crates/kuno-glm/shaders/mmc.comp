@@ -1,0 +1,133 @@
+// mm.comp on cooperative matrices (Intel Xe2: 8 x 16 x 16 half-precision products, f32 sums,
+// 16-lane subgroups): y[t][r] = sum_c W[r][c] x[t][c], token t's input at t*x_st + x_off,
+// its output at t*y_st + y_off. Workgroup (x, y) takes rows [x*128, +128) and tokens
+// [y*64, +64); per 32 columns the tokens' inputs (as halves) and the rows' weights (decoded
+// to halves) go to shared memory, and each of the 16 subgroups multiplies 32 tokens by 16
+// rows (four accumulators). rows a multiple of 128, cols of 32 (256 for kind 3); kinds 0
+// (Q8_0) and 3 (Q6_K) as in mv.comp. Rows of tokens past `tokens` up to the next multiple
+// of 8 are written with sums of zero inputs (the caller's buffers hold whole batches).
+// With group > 0, rows read x from x_off + (r / group) * gstride (group a multiple of 128).
+#version 460
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_spirv_intrinsics : require
+
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uvec4 w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) writeonly buffer Y { float y[]; };
+layout(push_constant) uniform Constants {
+    uint rows; uint cols; uint kind; uint x_off; uint y_off; uint group; uint gstride;
+    uint x_st; uint y_st; uint tokens;
+} p;
+
+shared uvec4 sa[256];   // 64 tokens x 32 halves
+shared uvec4 sb[512];   // 128 rows x 32 halves
+
+#define A coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseA>
+#define B coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB>
+#define C coopmat<float, gl_ScopeSubgroup, 8, 16, gl_MatrixUseAccumulator>
+
+uvec4 pack8(vec4 a, vec4 b) {
+    return uvec4(packHalf2x16(a.xy), packHalf2x16(a.zw), packHalf2x16(b.xy), packHalf2x16(b.zw));
+}
+
+vec4 q4(int v, float sc) {
+    return vec4(bitfieldExtract(v, 0, 8), bitfieldExtract(v, 8, 8),
+                bitfieldExtract(v, 16, 8), bitfieldExtract(v, 24, 8)) * sc;
+}
+
+uvec4 six(uint lo, uint hi, uint hb, float sc) {
+    vec4 a = vec4(
+        float(int((lo & 15u) | (((hi >> hb) & 3u) << 4)) - 32),
+        float(int(((lo >> 4) & 15u) | (((hi >> (hb + 2)) & 3u) << 4)) - 32),
+        float(int(((lo >> 8) & 15u) | (((hi >> (hb + 4)) & 3u) << 4)) - 32),
+        float(int(((lo >> 12) & 15u) | (((hi >> (hb + 6)) & 3u) << 4)) - 32)) * sc;
+    vec4 b = vec4(
+        float(int(((lo >> 16) & 15u) | (((hi >> (hb + 8)) & 3u) << 4)) - 32),
+        float(int(((lo >> 20) & 15u) | (((hi >> (hb + 10)) & 3u) << 4)) - 32),
+        float(int(((lo >> 24) & 15u) | (((hi >> (hb + 12)) & 3u) << 4)) - 32),
+        float(int((lo >> 28) | (((hi >> (hb + 14)) & 3u) << 4)) - 32)) * sc;
+    return pack8(a, b);
+}
+
+void main() {
+    uint lane = gl_LocalInvocationIndex, sg = gl_SubgroupID;
+    uint r0 = gl_WorkGroupID.x * 128, t0 = gl_WorkGroupID.y * 64;
+    uint xo = p.x_off + (p.group > 0 ? (r0 / p.group) * p.gstride : 0);
+    // This lane's share of the copies: 8 inputs of token at, 16 weights of row br.
+    uint at = lane / 4, aq = lane % 4;
+    bool ain = t0 + at < p.tokens;
+    uint abase = ((t0 + at) * p.x_st + xo) / 4 + aq * 2;
+    uint br = lane / 2, bh = lane % 2;
+    uint wr = r0 + br;
+    uint tg = sg / 8, rg = sg % 8;
+    C c0 = C(0.0), c1 = C(0.0), c2 = C(0.0), c3 = C(0.0);
+    A a0, a1, a2, a3;
+    B b;
+    for (uint k0 = 0; k0 < p.cols; k0 += 32) {
+        vec4 v0 = vec4(0.0), v1 = vec4(0.0);
+        if (ain) {
+            v0 = x[abase + k0 / 4];
+            v1 = x[abase + k0 / 4 + 1];
+        }
+        uvec4 pa = pack8(v0, v1);
+        uvec4 pb0, pb1;
+        uint c = k0 + bh * 16;
+        if (p.kind == 3) {
+            uint blocks = p.cols / 256;
+            uint block = c / 256, k = (c % 256) / 32;
+            uint base = (wr * blocks + block) * 13;
+            uvec4 lo = w[base + k];
+            uvec4 hw = w[base + 8 + k / 2];
+            uvec2 hi = (k & 1) == 0 ? hw.xy : hw.zw;
+            uint sc = w[base + 12][k / 2];
+            float d = uintBitsToFloat(s[wr * blocks + block]);
+            if (bh == 0) {
+                float s0 = float(bitfieldExtract(int(sc), int((k & 1) * 16), 8)) * d;
+                pb0 = six(lo.x, hi.x, 0, s0);
+                pb1 = six(lo.y, hi.x, 16, s0);
+            } else {
+                float s1 = float(bitfieldExtract(int(sc), int((k & 1) * 16 + 8), 8)) * d;
+                pb0 = six(lo.z, hi.y, 0, s1);
+                pb1 = six(lo.w, hi.y, 16, s1);
+            }
+        } else {
+            uint loads = p.cols / 16;
+            uint i = c / 16;
+            uvec4 u = w[wr * loads + i];
+            uint si = wr * (p.cols / 32) + i / 2;
+            float sc = unpackHalf2x16(s[si >> 1])[si & 1];
+            pb0 = pack8(q4(int(u.x), sc), q4(int(u.y), sc));
+            pb1 = pack8(q4(int(u.z), sc), q4(int(u.w), sc));
+        }
+        barrier();
+        sa[lane] = pa;
+        sb[br * 4 + bh * 2] = pb0;
+        sb[br * 4 + bh * 2 + 1] = pb1;
+        barrier();
+        for (uint kk = 0; kk < 2; kk++) {
+            uint ao = tg * 32 * 4 + kk * 2;
+            coopMatLoad(a0, sa, ao, 4, gl_CooperativeMatrixLayoutRowMajor);
+            coopMatLoad(a1, sa, ao + 32, 4, gl_CooperativeMatrixLayoutRowMajor);
+            coopMatLoad(a2, sa, ao + 64, 4, gl_CooperativeMatrixLayoutRowMajor);
+            coopMatLoad(a3, sa, ao + 96, 4, gl_CooperativeMatrixLayoutRowMajor);
+            coopMatLoad(b, sb, rg * 16 * 4 + kk * 2, 4, gl_CooperativeMatrixLayoutColumnMajor);
+            c0 = coopMatMulAdd(a0, b, c0);
+            c1 = coopMatMulAdd(a1, b, c1);
+            c2 = coopMatMulAdd(a2, b, c2);
+            c3 = coopMatMulAdd(a3, b, c3);
+        }
+    }
+    uint t = t0 + tg * 32;
+    uint first = t * p.y_st + p.y_off + r0 + rg * 16, st = p.y_st;
+    if (t < p.tokens) coopMatStore(c0, y, first, st, gl_CooperativeMatrixLayoutRowMajor);
+    if (t + 8 < p.tokens) coopMatStore(c1, y, first + 8 * st, st, gl_CooperativeMatrixLayoutRowMajor);
+    if (t + 16 < p.tokens) coopMatStore(c2, y, first + 16 * st, st, gl_CooperativeMatrixLayoutRowMajor);
+    if (t + 24 < p.tokens) coopMatStore(c3, y, first + 24 * st, st, gl_CooperativeMatrixLayoutRowMajor);
+}

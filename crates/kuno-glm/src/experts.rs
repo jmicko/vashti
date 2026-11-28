@@ -17,6 +17,14 @@ use crate::{Model, Result, cpu};
 /// Tokens for a use's weight to halve.
 pub const HALF_LIFE: f32 = 64.0;
 
+/// HALF_LIFE, or KUNO_GLM_HALF_LIFE.
+fn half_life() -> f32 {
+    std::env::var("KUNO_GLM_HALF_LIFE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(HALF_LIFE)
+}
+
 /// One MoE block's experts.
 pub struct BlockExperts {
     pub gate_kind: TensorType,
@@ -312,11 +320,7 @@ impl BlockExperts {
     /// highest score up, over the coldest resident not chosen now (or an empty slot), when
     /// it is used clearly more (by `margin`).
     pub fn observe(&self, block: usize, ids: &[usize], token: u64, margin: f32) -> Option<Trade> {
-        let half = std::env::var("KUNO_GLM_HALF_LIFE")
-            .ok()
-            .and_then(|v| v.parse().ok())
-            .unwrap_or(HALF_LIFE);
-        let decay = 0.5f32.powf(1.0 / half);
+        let decay = 0.5f32.powf(1.0 / half_life());
         let mut uses = self.uses.lock().ok()?;
         let at = |u: &mut (f32, u64)| {
             if u.1 < token {
@@ -349,6 +353,53 @@ impl BlockExperts {
                     }
                 }
                 _ => {}
+            }
+        }
+        let (slot, down, cold) = best?;
+        if down.is_some() && uses[up].0 < cold + margin {
+            return None;
+        }
+        Some(Trade {
+            block,
+            up,
+            down,
+            slot,
+            spare: self.spare,
+        })
+    }
+
+    /// Counts a batch's choices: `counts` per expert over `tokens` tokens, the last at
+    /// `token` (each use weighted by its mean decay over the batch).
+    pub fn add_batch(&self, counts: &[u32], token: u64, tokens: usize) {
+        let decay = 0.5f32.powf(1.0 / half_life());
+        let Ok(mut uses) = self.uses.lock() else {
+            return;
+        };
+        let t = tokens.max(1) as f32;
+        let mean = (1.0 - decay.powf(t)) / ((1.0 - decay) * t);
+        for (u, &c) in uses.iter_mut().zip(counts) {
+            if u.1 < token {
+                u.0 *= decay.powi((token - u.1) as i32);
+                u.1 = token;
+            }
+            u.0 += c as f32 * mean;
+        }
+    }
+
+    /// The best trade by score alone (between tokens: no choice in use to protect): the
+    /// hottest host expert over the coldest resident (or an empty slot), when used clearly
+    /// more (by `margin`).
+    pub fn best_trade(&self, block: usize, margin: f32) -> Option<Trade> {
+        self.device.as_ref()?;
+        let uses = self.uses.lock().ok()?;
+        let up = (0..uses.len())
+            .filter(|e| self.host_slot[*e].is_some())
+            .max_by(|a, b| uses[*a].0.total_cmp(&uses[*b].0).then(b.cmp(a)))?;
+        let mut best: Option<(usize, Option<usize>, f32)> = None;
+        for (k, r) in self.resident.iter().enumerate() {
+            let sc = r.map_or(f32::MIN, |e| uses[e].0);
+            if best.is_none_or(|b| sc < b.2) {
+                best = Some((k, *r, sc));
             }
         }
         let (slot, down, cold) = best?;

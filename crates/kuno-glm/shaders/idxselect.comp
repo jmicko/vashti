@@ -8,7 +8,13 @@
 layout(local_size_x = 1024) in;
 layout(set = 0, binding = 0) readonly buffer Score { float score[]; };
 layout(set = 0, binding = 1) writeonly buffer Idx { uint idx[]; };
+#ifdef BATCHED
+// Batched: token t = workgroup z at position pos + t (when indexed), its scores at
+// t*score_st, its positions at t*idx_st.
+layout(push_constant) uniform Constants { uint pos; uint keep; uint kpool; uint score_st; uint idx_st; } p;
+#else
 layout(push_constant) uniform Constants { uint pools; uint keep; uint tail; uint ntail; } p;
+#endif
 
 shared uint hist[256];
 shared uint prefix_sel, need_sel;
@@ -22,6 +28,15 @@ uint key_of(float f) {
 
 void main() {
     uint lane = gl_LocalInvocationIndex;
+#ifdef BATCHED
+    uint t = gl_WorkGroupID.z, P = p.pos + t;
+    uint pools = (P + 1) / p.kpool;
+    if (pools <= p.keep) return;
+    uint tail = pools * p.kpool, ntail = P + 1 - tail;
+    uint sb = t * p.score_st, ob = t * p.idx_st;
+#else
+    uint pools = p.pools, tail = p.tail, ntail = p.ntail, sb = 0, ob = 0;
+#endif
     if (lane == 0) {
         prefix_sel = 0;
         need_sel = p.keep;
@@ -33,8 +48,8 @@ void main() {
         barrier();
         uint mask_hi = shift == 24 ? 0u : (0xffffffffu << uint(shift + 8));
         uint pre = prefix_sel;
-        for (uint i = lane; i < p.pools; i += 1024) {
-            uint k = key_of(score[i]);
+        for (uint i = lane; i < pools; i += 1024) {
+            uint k = key_of(score[sb + i]);
             if ((k & mask_hi) == (pre & mask_hi)) atomicAdd(hist[(k >> uint(shift)) & 255u], 1u);
         }
         barrier();
@@ -54,11 +69,11 @@ void main() {
     uint thr = prefix_sel;     // the keep-th largest key
     uint ties = need_sel;      // how many keys equal to thr to take (the lowest pools first)
     // Each lane owns a contiguous run of pools: counts of greater and of equal keys.
-    uint per = (p.pools + 1023) / 1024;
-    uint lo = lane * per, hi = min(lo + per, p.pools);
+    uint per = (pools + 1023) / 1024;
+    uint lo = lane * per, hi = min(lo + per, pools);
     uint gt = 0, eq = 0;
     for (uint i = lo; i < hi; i++) {
-        uint k = key_of(score[i]);
+        uint k = key_of(score[sb + i]);
         gt += k > thr ? 1u : 0u;
         eq += k == thr ? 1u : 0u;
     }
@@ -82,15 +97,15 @@ void main() {
     // among kept pools = kept greater before + kept equal before, in pool order.
     uint g_before = lane_sum[0][lane];
     for (uint i = lo; i < hi; i++) {
-        uint k = key_of(score[i]);
+        uint k = key_of(score[sb + i]);
         bool keepit = k > thr || (k == thr && eq_before < ties);
         uint taken_eq = min(eq_before, ties);
         if (keepit) {
             uint rank = g_before + taken_eq;
-            for (uint s = 0; s < 4; s++) idx[rank * 4 + s] = i * 4 + s;
+            for (uint s = 0; s < 4; s++) idx[ob + rank * 4 + s] = i * 4 + s;
         }
         if (k > thr) g_before++;
         if (k == thr) eq_before++;
     }
-    if (lane < p.ntail) idx[p.keep * 4 + lane] = p.tail + lane;
+    if (lane < ntail) idx[ob + p.keep * 4 + lane] = tail + lane;
 }

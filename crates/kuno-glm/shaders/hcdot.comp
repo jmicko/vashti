@@ -22,7 +22,13 @@ layout(set = 0, binding = 5) readonly buffer Out { float o[]; };
 layout(set = 0, binding = 6) writeonly buffer Xn { float xn[]; };
 layout(set = 0, binding = 7) readonly buffer Out2 { float o2[]; };
 layout(set = 0, binding = 8) readonly buffer Out3 { float o3[]; };
+#ifdef BATCHED
+// Batched (BATCHED): token t = workgroup z, its streams at t*4n (X, Xn), part at t*1024, coef
+// at t*32, o at t*o_st + o_off, o2 at t*o2_st, o3 at t*o3_st.
+layout(push_constant) uniform Constants { uint n; uint mode; uint o_off; uint o_st; uint o2_st; uint o3_st; } p;
+#else
 layout(push_constant) uniform Constants { uint n; uint mode; uint o_off; } p;
+#endif
 
 const uint CHUNK = 512, ROWS = 24, COLS = 16384;
 shared float xs[CHUNK];
@@ -31,23 +37,30 @@ shared float sq[32];
 
 void main() {
     uint g = gl_WorkGroupID.x, lane = gl_LocalInvocationIndex;
+#ifdef BATCHED
+    uint t = gl_WorkGroupID.z;
+    uint xb = t * 4 * p.n, pb = t * 1024, cb = t * 32, ob = t * p.o_st + p.o_off;
+    uint o2b = t * p.o2_st, o3b = t * p.o3_st;
+#else
+    uint xb = 0, pb = 0, cb = 0, ob = p.o_off, o2b = 0, o3b = 0;
+#endif
     uint c0 = g * CHUNK;
     // Columns c0 .. c0+512 of the flattened streams: stream (c0 / n), values (c0 % n)...
     for (uint j = lane; j < CHUNK; j += 256) {
         uint c = c0 + j;
-        float v = x[c];
+        float v = x[xb + c];
         if (p.mode == 1 || p.mode == 2) {
             uint dst = c / p.n, i = c % p.n;
             // coef: [0..4) post, [4..20) comb[src][dst]
-            float res = p.mode == 2 ? (o2[i] + o3[i]) + o[p.o_off + i] : o[p.o_off + i];
-            v = res * coef[dst];
-            for (uint src = 0; src < 4; src++) v += x[src * p.n + i] * coef[4 + src * 4 + dst];
+            float res = p.mode == 2 ? (o2[o2b + i] + o3[o3b + i]) + o[ob + i] : o[ob + i];
+            v = res * coef[cb + dst];
+            for (uint src = 0; src < 4; src++) v += x[xb + src * p.n + i] * coef[cb + 4 + src * 4 + dst];
         }
         xs[j] = v;
     }
     barrier();
     if (p.mode >= 1) {
-        for (uint j = lane; j < CHUNK; j += 256) xn[c0 + j] = xs[j];
+        for (uint j = lane; j < CHUNK; j += 256) xn[xb + c0 + j] = xs[j];
     }
     // 24 rows x 16 blocks of 32 = 384 tasks; lane t takes tasks t and t + 256.
     float acc[2] = float[2](0.0, 0.0);
@@ -85,10 +98,10 @@ void main() {
     s2 = subgroupAdd(s2);
     if (gl_SubgroupInvocationID == 0) sq[gl_SubgroupID] = s2;
     barrier();
-    if (lane < ROWS) part[g * 32 + lane] = rowsum[lane][0];
+    if (lane < ROWS) part[pb + g * 32 + lane] = rowsum[lane][0];
     if (lane == 0) {
         float t = 0.0;
         for (uint i = 0; i < gl_NumSubgroups; i++) t += sq[i];
-        part[g * 32 + 24] = t;
+        part[pb + g * 32 + 24] = t;
     }
 }

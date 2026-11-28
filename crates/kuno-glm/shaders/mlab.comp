@@ -1,0 +1,90 @@
+// Absorbed latent attention for a batch (mla.comp's, H heads per workgroup so each cached
+// latent is read once for all of them): workgroup (g, t) takes heads [g*H, g*H + H) of
+// token t at position pos + t, scoring its causal span of latents [positions][lora] (or,
+// past top_k + kpool - 1 positions, the indexer's choice idx[t*idx_st ..]) with the heads'
+// absorbed queries (q at t*q_st), a softmax per head, and the latents mixed by those weights
+// into mixed (at t*m_st). At most MAXC positions: the indexer takes over before that.
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Absorbed { vec4 q[]; };
+layout(set = 0, binding = 1) readonly buffer Latents { vec4 lat[]; };
+layout(set = 0, binding = 2) writeonly buffer Mixed { float mixed[]; };
+layout(set = 0, binding = 3) readonly buffer Idx { uint idx[]; };
+layout(push_constant) uniform Constants { uint lora; float scale; uint pos; uint top_k; uint kpool; uint q_st; uint m_st; uint idx_st; } p;
+
+const uint H = 4, MAXC = 2052, L4 = 128;   // lora 512
+shared float score[H][MAXC];
+shared vec4 qs[H][L4];
+shared float red[H][32];
+
+void main() {
+    uint g = gl_WorkGroupID.x, tok = gl_WorkGroupID.y, lane = gl_LocalInvocationIndex;
+    uint P = p.pos + tok;
+    uint pools = (P + 1) / p.kpool, keep = p.top_k / p.kpool;
+    bool indexed = pools > keep;
+    uint count = min(indexed ? keep * p.kpool + (P + 1 - pools * p.kpool) : P + 1, MAXC);
+    uint ib = tok * p.idx_st;
+    for (uint i = lane; i < H * L4; i += 256) {
+        uint h = i / L4, c = i % L4;
+        qs[h][c] = q[(tok * p.q_st) / 4 + (g * H + h) * L4 + c];
+    }
+    barrier();
+    float top[H];
+    for (uint h = 0; h < H; h++) top[h] = -1.0 / 0.0;
+    for (uint t = lane; t < count; t += 256) {
+        uint pt = indexed ? idx[ib + t] : t;
+        float s[H];
+        for (uint h = 0; h < H; h++) s[h] = 0.0;
+        for (uint c = 0; c < L4; c++) {
+            vec4 l = lat[pt * L4 + c];
+            for (uint h = 0; h < H; h++) s[h] += dot(qs[h][c], l);
+        }
+        for (uint h = 0; h < H; h++) {
+            score[h][t] = s[h] * p.scale;
+            top[h] = max(top[h], s[h] * p.scale);
+        }
+    }
+    for (uint h = 0; h < H; h++) {
+        float v = subgroupMax(top[h]);
+        if (gl_SubgroupInvocationID == 0) red[h][gl_SubgroupID] = v;
+    }
+    barrier();
+    for (uint h = 0; h < H; h++) {
+        float t = red[h][0];
+        for (uint i = 1; i < gl_NumSubgroups; i++) t = max(t, red[h][i]);
+        top[h] = t;
+    }
+    barrier();
+    float sum[H];
+    for (uint h = 0; h < H; h++) sum[h] = 0.0;
+    for (uint t = lane; t < count; t += 256) {
+        for (uint h = 0; h < H; h++) {
+            float e = exp(score[h][t] - top[h]);
+            score[h][t] = e;
+            sum[h] += e;
+        }
+    }
+    for (uint h = 0; h < H; h++) {
+        float v = subgroupAdd(sum[h]);
+        if (gl_SubgroupInvocationID == 0) red[h][gl_SubgroupID] = v;
+    }
+    barrier();
+    float inv[H];
+    for (uint h = 0; h < H; h++) {
+        float t = 0.0;
+        for (uint i = 0; i < gl_NumSubgroups; i++) t += red[h][i];
+        inv[h] = 1.0 / t;
+    }
+    // Lane takes channels lane, lane + 256 (coalesced over positions), every head at once.
+    for (uint c = lane; c < p.lora; c += 256) {
+        float m[H];
+        for (uint h = 0; h < H; h++) m[h] = 0.0;
+        for (uint t = 0; t < count; t++) {
+            uint pt = indexed ? idx[ib + t] : t;
+            float l = lat[pt * L4 + c / 4][c % 4];
+            for (uint h = 0; h < H; h++) m[h] += score[h][t] * l;
+        }
+        for (uint h = 0; h < H; h++) mixed[tok * p.m_st + (g * H + h) * p.lora + c] = m[h] * inv[h];
+    }
+}

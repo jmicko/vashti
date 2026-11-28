@@ -1,0 +1,47 @@
+// The batch's routing grouped by expert (one workgroup): the assignments a = t*used + k of
+// `tokens` tokens' choices (routed [tokens][2 used]: ids, weights) as lists: count
+// [experts], first [experts] (each expert's run starts at a multiple of 8), the assignments
+// by expert from 2*experts + first (in no particular order within one: each assignment's
+// result is independent of the others), and at 2*experts + lp + a each assignment's position.
+// The counts also go to usage[usage_off ..] (host-visible: how often the batch chose each
+// expert, for the banks; in memory only).
+#version 460
+layout(local_size_x = 1024) in;
+layout(set = 0, binding = 0) readonly buffer Routed { uint routed[]; };
+layout(set = 0, binding = 1) writeonly buffer Lists { uint lists[]; };
+layout(set = 0, binding = 2) writeonly buffer Usage { uint usage[]; };
+layout(push_constant) uniform Constants { uint tokens; uint used; uint experts; uint usage_off; uint lp; } p;
+
+shared uint count[512], first[512], cursor[512];
+
+void main() {
+    uint lane = gl_LocalInvocationIndex;
+    uint total = p.tokens * p.used;
+    for (uint e = lane; e < p.experts; e += 1024) {
+        count[e] = 0;
+        cursor[e] = 0;
+    }
+    barrier();
+    for (uint a = lane; a < total; a += 1024)
+        atomicAdd(count[routed[(a / p.used) * 2 * p.used + a % p.used]], 1u);
+    barrier();
+    if (lane == 0) {
+        uint at = 0;
+        for (uint e = 0; e < p.experts; e++) {
+            first[e] = at;
+            at += (count[e] + 7) & ~7u;
+        }
+    }
+    barrier();
+    for (uint e = lane; e < p.experts; e += 1024) {
+        lists[e] = count[e];
+        lists[p.experts + e] = first[e];
+        usage[p.usage_off + e] = count[e];
+    }
+    for (uint a = lane; a < total; a += 1024) {
+        uint e = routed[(a / p.used) * 2 * p.used + a % p.used];
+        uint at = first[e] + atomicAdd(cursor[e], 1u);
+        lists[2 * p.experts + at] = a;
+        lists[2 * p.experts + p.lp + a] = at;
+    }
+}

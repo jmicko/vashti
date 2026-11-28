@@ -8,15 +8,26 @@ layout(set = 0, binding = 0) readonly buffer In { float v[]; };       // qa [qlo
 layout(set = 0, binding = 1) readonly buffer Norms { float w[]; };    // qnorm, kvnorm
 layout(set = 0, binding = 2) writeonly buffer Qr { float qr[]; };
 layout(set = 0, binding = 3) writeonly buffer Latents { float latents[]; };
+#ifdef BATCHED
+// Batched: token t = workgroup z at position pos + t, its input at t*in_st, qr at t*qr_st.
+layout(push_constant) uniform Constants { uint qlora; uint lora; uint pos; float eps; uint in_st; uint qr_st; } p;
+#else
 layout(push_constant) uniform Constants { uint qlora; uint lora; uint pos; float eps; } p;
+#endif
 
 shared float red[2][32];
 
 void main() {
     uint lane = gl_LocalInvocationIndex;
+#ifdef BATCHED
+    uint t = gl_WorkGroupID.z;
+    uint ib = t * p.in_st, qb = t * p.qr_st, pos = p.pos + t;
+#else
+    uint ib = 0, qb = 0, pos = p.pos;
+#endif
     float a = 0.0, b = 0.0;
-    for (uint i = lane; i < p.qlora; i += 256) a += v[i] * v[i];
-    for (uint i = lane; i < p.lora; i += 256) b += v[p.qlora + i] * v[p.qlora + i];
+    for (uint i = lane; i < p.qlora; i += 256) a += v[ib + i] * v[ib + i];
+    for (uint i = lane; i < p.lora; i += 256) b += v[ib + p.qlora + i] * v[ib + p.qlora + i];
     a = subgroupAdd(a);
     b = subgroupAdd(b);
     if (gl_SubgroupInvocationID == 0) {
@@ -31,7 +42,7 @@ void main() {
     }
     float ra = 1.0 / sqrt(ta / float(p.qlora) + p.eps);
     float rb = 1.0 / sqrt(tb / float(p.lora) + p.eps);
-    for (uint i = lane; i < p.qlora; i += 256) qr[i] = v[i] * ra * w[i];
+    for (uint i = lane; i < p.qlora; i += 256) qr[qb + i] = v[ib + i] * ra * w[i];
     for (uint i = lane; i < p.lora; i += 256)
-        latents[p.pos * p.lora + i] = v[p.qlora + i] * rb * w[p.qlora + i];
+        latents[pos * p.lora + i] = v[ib + p.qlora + i] * rb * w[p.qlora + i];
 }

@@ -17,7 +17,23 @@ layout(set = 0, binding = 4) readonly buffer Braw { float braw[]; };
 layout(set = 0, binding = 5) readonly buffer Params { float a[64]; float onorm[128]; float dt[]; };
 layout(set = 0, binding = 6) buffer State { float S[]; };
 layout(set = 0, binding = 7) writeonly buffer Out { float o[]; };
+#ifdef BATCHED
+// Batched: `tokens` steps in order, token t's qkv at t*qkv_st, fg at t*fg_st, braw at
+// t*braw_st + braw_off, out at t*o_st (the conv history kept in registers between them).
+layout(push_constant) uniform Constants { uint d; float lower; float eps; uint braw_off; uint tokens; uint qkv_st; uint fg_st; uint braw_st; uint o_st; } p;
+#define TOKENS p.tokens
+#define QKV_ST p.qkv_st
+#define FG_ST p.fg_st
+#define BRAW_ST p.braw_st
+#define O_ST p.o_st
+#else
 layout(push_constant) uniform Constants { uint d; float lower; float eps; uint braw_off; } p;
+#define TOKENS 1u
+#define QKV_ST 0u
+#define FG_ST 0u
+#define BRAW_ST 0u
+#define O_ST 0u
+#endif
 
 shared float qs[128], ks[128], decay[128];
 shared float red[3][32];
@@ -38,45 +54,61 @@ float total(float v, uint slot) {
 void main() {
     uint h = gl_WorkGroupID.x, j = gl_LocalInvocationIndex;
     uint c = h * 128 + j;
-    float qkvj[3];
+    float hs[9];
     for (uint part = 0; part < 3; part++) {
         uint ch = part * p.d + c;
-        vec4 w = conv[ch];
-        float now = qkv[ch];
-        float h0 = hist[ch], h1 = hist[3 * p.d + ch], h2 = hist[6 * p.d + ch];
-        float sum = 0.0;
-        sum += w.x * h0;
-        sum += w.y * h1;
-        sum += w.z * h2;
-        sum += w.w * now;
-        qkvj[part] = silu(sum);
-        hist[ch] = h1;
-        hist[3 * p.d + ch] = h2;
-        hist[6 * p.d + ch] = now;
+        hs[part * 3] = hist[ch];
+        hs[part * 3 + 1] = hist[3 * p.d + ch];
+        hs[part * 3 + 2] = hist[6 * p.d + ch];
     }
-    float qn = total(qkvj[0] * qkvj[0], 0);
-    float kn = total(qkvj[1] * qkvj[1], 1);
-    float q = qkvj[0] / max(sqrt(qn), 1e-6);
-    float k = qkvj[1] / max(sqrt(kn), 1e-6);
-    float v = qkvj[2];
-    qs[j] = q * (1.0 / sqrt(128.0));
-    ks[j] = k;
-    float t = (fg[c] + dt[c]) * a[h];
-    decay[j] = exp(sigmoid(-t) * p.lower);
-    float beta = sigmoid(braw[p.braw_off + h]);
-    barrier();
     // Lane j owns column j of the head's state: S[i][j] at base + i * 128 + j.
     uint base = h * 128 * 128 + j;
-    float pred = 0.0;
-    for (uint i = 0; i < 128; i++) pred += S[base + i * 128] * decay[i] * ks[i];
-    float delta = (v - pred) * beta;
-    float acc = 0.0;
-    for (uint i = 0; i < 128; i++) {
-        float e = S[base + i * 128] * decay[i] + ks[i] * delta;
-        S[base + i * 128] = e;
-        acc += e * qs[i];
+    for (uint tk = 0; tk < TOKENS; tk++) {
+        uint qb = tk * QKV_ST, fb = tk * FG_ST, bb = tk * BRAW_ST, ob = tk * O_ST;
+        float qkvj[3];
+        for (uint part = 0; part < 3; part++) {
+            uint ch = part * p.d + c;
+            vec4 w = conv[ch];
+            float now = qkv[qb + ch];
+            float h0 = hs[part * 3], h1 = hs[part * 3 + 1], h2 = hs[part * 3 + 2];
+            float sum = 0.0;
+            sum += w.x * h0;
+            sum += w.y * h1;
+            sum += w.z * h2;
+            sum += w.w * now;
+            qkvj[part] = silu(sum);
+            hs[part * 3] = h1;
+            hs[part * 3 + 1] = h2;
+            hs[part * 3 + 2] = now;
+        }
+        float qn = total(qkvj[0] * qkvj[0], 0);
+        float kn = total(qkvj[1] * qkvj[1], 1);
+        float q = qkvj[0] / max(sqrt(qn), 1e-6);
+        float k = qkvj[1] / max(sqrt(kn), 1e-6);
+        float v = qkvj[2];
+        qs[j] = q * (1.0 / sqrt(128.0));
+        ks[j] = k;
+        float t = (fg[fb + c] + dt[c]) * a[h];
+        decay[j] = exp(sigmoid(-t) * p.lower);
+        float beta = sigmoid(braw[bb + p.braw_off + h]);
+        barrier();
+        float pred = 0.0;
+        for (uint i = 0; i < 128; i++) pred += S[base + i * 128] * decay[i] * ks[i];
+        float delta = (v - pred) * beta;
+        float acc = 0.0;
+        for (uint i = 0; i < 128; i++) {
+            float e = S[base + i * 128] * decay[i] + ks[i] * delta;
+            S[base + i * 128] = e;
+            acc += e * qs[i];
+        }
+        float on = total(acc * acc, 2);
+        float normed = acc / sqrt(on / 128.0 + p.eps) * onorm[j];
+        o[ob + c] = normed * sigmoid(fg[fb + p.d + c]);
     }
-    float on = total(acc * acc, 2);
-    float normed = acc / sqrt(on / 128.0 + p.eps) * onorm[j];
-    o[c] = normed * sigmoid(fg[p.d + c]);
+    for (uint part = 0; part < 3; part++) {
+        uint ch = part * p.d + c;
+        hist[ch] = hs[part * 3];
+        hist[3 * p.d + ch] = hs[part * 3 + 1];
+        hist[6 * p.d + ch] = hs[part * 3 + 2];
+    }
 }

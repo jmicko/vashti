@@ -7,6 +7,8 @@ use crate::experts::{self, BlockExperts};
 use crate::gpu::{Kernels, Mat, filled};
 use crate::{Matrix, Model, Result};
 
+mod batch;
+
 /// The engine's kernels besides the products.
 struct Extra {
     hcdot: Kernel,
@@ -25,6 +27,28 @@ struct Extra {
     copyoff: Kernel,
     /// The IQ2_S and IQ3_S grids for mve.
     tables: Buffer,
+    /// Batched variants (prompt processing, `batch`).
+    b: Batched,
+}
+
+struct Batched {
+    hcdot: Kernel,
+    hcmix: Kernel,
+    kda: Kernel,
+    dsanorm: Kernel,
+    idxstore: Kernel,
+    idxscore: Kernel,
+    idxselect: Kernel,
+    mla: Kernel,
+    route: Kernel,
+    mm: Kernel,
+    /// The cooperative-matrix products (Intel Xe2's half-precision shape): dense and experts.
+    /// Without them a prompt runs a token at a time.
+    mmc: Option<Kernel>,
+    mec: Option<Kernel>,
+    group: Kernel,
+    combine: Kernel,
+    copy4: Kernel,
 }
 
 struct Mixer {
@@ -89,7 +113,7 @@ struct Block {
     ffn: Ffn,
 }
 
-/// Device scratch for one token.
+/// Device scratch for `batch` tokens (one token's at the start of each buffer while decoding).
 struct Scratch {
     /// The four streams, alternating between the two.
     x: [Buffer; 2],
@@ -114,6 +138,8 @@ struct Scratch {
     ib: Buffer,
     iscore: Buffer,
     iidx: Buffer,
+    /// A batch's routing grouped by expert (`group.comp`).
+    lists: Buffer,
 }
 
 pub struct Engine<'m> {
@@ -136,6 +162,16 @@ pub struct Engine<'m> {
     token: Mapped,
     pos: usize,
     max_positions: usize,
+    /// Tokens per batch while processing a prompt (1: one at a time).
+    batch: usize,
+    /// Per MoE block, its sources' expert order for mme (device slots, then host slots); how
+    /// often a batch chose each expert per block.
+    order: Mapped,
+    usage: Mapped,
+    /// Two device buffers the host experts stream through while a batch runs (`piece` slots
+    /// each; empty without batching).
+    stage: Vec<Buffer>,
+    piece: usize,
     /// When set, the mean of the streams after each block (comparison with the reference).
     pub trace: Option<Vec<Vec<f32>>>,
     /// Staged slot maps for trades, and this token's trades.
@@ -221,7 +257,33 @@ impl<'m> Engine<'m> {
                 t.extend(kuno_text::quant::IQ3_S_GRID);
                 filled(&gpu, bytes_of(&t))?
             },
+            b: Batched {
+                hcdot: kernel(include_bytes!("../shaders/hcdot_b.spv"), 9, 6)?,
+                hcmix: kernel(include_bytes!("../shaders/hcmix_b.spv"), 6, 5)?,
+                kda: kernel(include_bytes!("../shaders/kda_b.spv"), 8, 9)?,
+                dsanorm: kernel(include_bytes!("../shaders/dsanorm_b.spv"), 4, 6)?,
+                idxstore: kernel(include_bytes!("../shaders/idxstore_b.spv"), 4, 4)?,
+                idxscore: kernel(include_bytes!("../shaders/idxscore_b.spv"), 4, 8)?,
+                idxselect: gpu.kernel(include_bytes!("../shaders/idxselect_b.spv"), 2, 5, None)?,
+                mla: kernel(include_bytes!("../shaders/mlab.spv"), 4, 8)?,
+                route: kernel(include_bytes!("../shaders/route_b.spv"), 5, 3)?,
+                mm: kernel(include_bytes!("../shaders/mm.spv"), 4, 12)?,
+                mmc: if gpu.has_half8() && k.lanes == 16 {
+                    Some(kernel(include_bytes!("../shaders/mmc.spv"), 4, 10)?)
+                } else {
+                    None
+                },
+                mec: if gpu.has_half8() && k.lanes == 16 {
+                    Some(kernel(include_bytes!("../shaders/mec.spv"), 7, 12)?)
+                } else {
+                    None
+                },
+                group: gpu.kernel(include_bytes!("../shaders/group.spv"), 3, 5, None)?,
+                combine: kernel(include_bytes!("../shaders/combine.spv"), 4, 5)?,
+                copy4: kernel(include_bytes!("../shaders/copy4.spv"), 2, 3)?,
+            },
         };
+
         let m = |n: &str| model.matrix(n);
         let v = |n: &str| model.vector(n);
         let up = |mx: &Matrix| Mat::upload(&gpu, mx);
@@ -324,7 +386,17 @@ impl<'m> Engine<'m> {
             eprintln!("block {il} on the device");
         }
         let n = hp.embd;
-        let buf = |floats: usize| gpu.buffer((floats * 4) as u64);
+        // KUNO_GLM_BATCH: tokens per batch of a prompt (default 2048, ~1 MB of device scratch
+        // per token; 1 runs it a token at a time). The scratch below is per token, times it.
+        let batch: usize = std::env::var("KUNO_GLM_BATCH")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(2048usize)
+            .clamp(1, 4096)
+            .next_multiple_of(8);
+        let buf = |floats: usize| gpu.buffer((floats * batch * 4) as u64);
+        let used = hp.experts_used;
+        let lp = batch * used + 8 * hp.experts;
         let s = Scratch {
             x: [buf(4 * n)?, buf(4 * n)?],
             part: buf(32 * 32)?,
@@ -334,20 +406,41 @@ impl<'m> Engine<'m> {
             b: buf(hp.heads * hp.kv_lora.max(2 * hp.kda_head))?,
             c: buf(hp.heads * hp.kv_lora)?,
             out: buf(hp.ff.max(2 * hp.ff_shared) * 2)?,
-            logits: buf(hp.vocab)?,
-            ge: buf(hp.experts_used * 2 * hp.ff_expert)?,
-            gh: buf(hp.experts_used * hp.ff_expert)?,
-            gd: buf(n)?,
+            logits: gpu.buffer((hp.vocab * 4) as u64)?,
+            // A batch's assignments by expert, each expert's run padded to 8 (group.comp).
+            ge: gpu.buffer((lp * 2 * hp.ff_expert * 4) as u64)?,
+            gh: gpu.buffer((lp * hp.ff_expert * 4) as u64)?,
+            gd: gpu.buffer((lp * n * 4) as u64)?,
             zeros: floats(&gpu, &vec![0f32; n])?,
-            routed: buf(2 * hp.experts_used)?,
+            routed: buf(2 * used)?,
             ia: buf(256 + 32)?,
             ib: buf(32 * 128)?,
             iscore: buf((max_positions / 4).max(4))?,
             iidx: buf(hp.indexer_top_k + hp.indexer_kpool)?,
+            lists: gpu.buffer(((2 * hp.experts + 2 * lp) * 4) as u64)?,
         };
         let output = up(&m("output.weight")?)?;
         // The experts: the device's free memory less a margin (or KUNO_GLM_DEVICE_GB).
         let margin = 1u64 << 30;
+        // The staging pair for batches: KUNO_GLM_PIECE slots each (default 24, ~0.2 GB).
+        let piece: usize = std::env::var("KUNO_GLM_PIECE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(24usize)
+            .max(1);
+        let mut stage = Vec::new();
+        if batch > 1 && e.b.mec.is_some() {
+            let mut slot_bytes = 0u64;
+            for il in hp.dense_lead..hp.layers {
+                let name = |p: &str| format!("blk.{il}.ffn_{p}_exps.weight");
+                let (_, gr, _) = model.layout(&name("gate"))?;
+                let (_, dr, _) = model.layout(&name("down"))?;
+                slot_bytes = slot_bytes.max((2 * hp.ff_expert * gr + n * dr) as u64);
+            }
+            for _ in 0..2 {
+                stage.push(gpu.buffer(piece as u64 * slot_bytes)?);
+            }
+        }
         let budget = std::env::var("KUNO_GLM_DEVICE_GB")
             .ok()
             .and_then(|v| v.parse::<f64>().ok())
@@ -400,7 +493,12 @@ impl<'m> Engine<'m> {
             experts,
             second,
             embed: m("token_embd.weight")?,
-            host_x: gpu.mapped((4 * n * 4) as u64)?,
+            host_x: gpu.mapped((4 * n * 4 * batch) as u64)?,
+            order: gpu.mapped((hp.layers * 2 * hp.experts * 4) as u64)?,
+            usage: gpu.mapped((hp.layers * hp.experts * 4) as u64)?,
+            batch,
+            stage,
+            piece,
             route: gpu.mapped(((2 * hp.experts_used + n + 4) * 4) as u64)?,
             cpu_out: gpu.mapped((n * 4) as u64)?,
             token: gpu.mapped(16)?,
@@ -952,7 +1050,7 @@ impl<'m> Engine<'m> {
     /// to staging, then the expert up into its slot and the new slot map).
     fn trade<'a>(&'a self, il: usize, ex: &'a BlockExperts) -> Result<Option<Passing>> {
         let hp = &self.model.hp;
-        let (Some(pool), Ok(mut trades)) = (&ex.device, self.trades.lock()) else {
+        let (Some(_), Ok(mut trades)) = (&ex.device, self.trades.lock()) else {
             return Ok(None);
         };
         if trades.len() >= self.trade_stage.len() {
@@ -974,11 +1072,29 @@ impl<'m> Engine<'m> {
             return Ok(None);
         };
         let map = &self.trade_stage[trades.len()];
-        let slots = ex.slots_after(&trade);
+        let mut ops: Vec<Op<'a>> = Vec::new();
+        self.trade_ops(ex, &trade, map, &mut ops)?;
+        trades.push(trade);
+        drop(trades);
+        // Runs after this block's device experts (queue order), while the CPU works.
+        Ok(Some(submit(self, &mut ops)?))
+    }
+
+    /// Records `trade`'s copies (victim down to its spare host slot, then the expert up into
+    /// its slot and the new slot map staged in `map`).
+    fn trade_ops<'a>(
+        &'a self,
+        ex: &'a BlockExperts,
+        trade: &experts::Trade,
+        map: &'a Mapped,
+        ops: &mut Vec<Op<'a>>,
+    ) -> Result<()> {
+        let hp = &self.model.hp;
+        let pool = ex.device.as_ref().ok_or("model_state_invalid")?;
+        let slots = ex.slots_after(trade);
         self.gpu
             .write_mapped(map, 0, &kuno_image::engine::gpu::floats(bytes_of(&slots)))?;
         let pools = [&pool.gu_w, &pool.gu_s, &pool.down_w, &pool.down_s];
-        let mut ops: Vec<Op<'a>> = Vec::new();
         let copy = |ops: &mut Vec<Op<'a>>,
                     src: &'a Buffer,
                     dst: &'a Buffer,
@@ -1000,7 +1116,7 @@ impl<'m> Engine<'m> {
             let (chunk, mut at) = ex.host_at(trade.spare);
             for (b, &st) in pools.iter().zip(&pool.stride) {
                 if st > 0 {
-                    copy(&mut ops, b, chunk.buffer(), st, trade.slot * st, at, true);
+                    copy(ops, b, chunk.buffer(), st, trade.slot * st, at, true);
                 }
                 at += st;
             }
@@ -1011,15 +1127,12 @@ impl<'m> Engine<'m> {
         let (chunk, mut at) = ex.host_at(ex.host_slot[trade.up].ok_or("model_state_invalid")?);
         for (b, &st) in pools.iter().zip(&pool.stride) {
             if st > 0 {
-                copy(&mut ops, chunk.buffer(), b, st, at, trade.slot * st, true);
+                copy(ops, chunk.buffer(), b, st, at, trade.slot * st, true);
             }
             at += st;
         }
-        copy(&mut ops, map.buffer(), &pool.slots, hp.experts, 0, 0, false);
-        trades.push(trade);
-        drop(trades);
-        // Runs after this block's device experts (queue order), while the CPU works.
-        Ok(Some(submit(self, &mut ops)?))
+        copy(ops, map.buffer(), &pool.slots, hp.experts, 0, 0, false);
+        Ok(())
     }
 
     /// After the token: every trade's host side (its passes have completed).
@@ -1204,7 +1317,23 @@ fn submit<'a>(this: &'a Engine, ops: &mut Vec<Op<'a>>) -> Result<Passing> {
         // Each step timed (with barriers after every step: device time, not overlap).
         let times = this.gpu.pass_profiled(&steps, &vec![false; steps.len()])?;
         let e = &this.e;
-        let names: [(&Kernel, &str); 11] = [
+        let names: &[(&Kernel, &str)] = &[
+            (&e.b.hcdot, "hcdot_b"),
+            (&e.b.hcmix, "hcmix_b"),
+            (&e.b.kda, "kda_b"),
+            (&e.b.dsanorm, "dsanorm_b"),
+            (&e.b.idxstore, "idxstore_b"),
+            (&e.b.idxscore, "idxscore_b"),
+            (&e.b.idxselect, "idxselect_b"),
+            (&e.b.mla, "mla_b"),
+            (&e.b.route, "route_b"),
+            (&e.b.mm, "mm"),
+            (e.b.mmc.as_ref().unwrap_or(&e.b.mm), "mmc"),
+            (e.b.mec.as_ref().unwrap_or(&e.b.mm), "mec"),
+            (&e.b.group, "group"),
+            (&e.b.combine, "combine"),
+            (&e.b.copy4, "copy4"),
+            (&e.copyoff, "copyoff"),
             (&e.hcdot, "hcdot"),
             (&e.hcmix, "hcmix"),
             (&e.kda, "kda"),
@@ -1229,6 +1358,18 @@ fn submit<'a>(this: &'a Engine, ops: &mut Vec<Op<'a>>) -> Result<Passing> {
                     o.constants[0], o.constants[1], o.constants[2]
                 ),
                 "mve" => format!("mve mode {} kind {}", o.constants[0], o.constants[1]),
+                "mm" => format!(
+                    "mm {}x{} kind {} x{}",
+                    o.constants[0], o.constants[1], o.constants[2], o.constants[11]
+                ),
+                "mmc" => format!(
+                    "mmc {}x{} kind {} x{}",
+                    o.constants[0], o.constants[1], o.constants[2], o.constants[9]
+                ),
+                "mec" => format!(
+                    "mec mode {} kind {} slots {}",
+                    o.constants[0], o.constants[1], o.groups[1]
+                ),
                 n => n.to_string(),
             };
             let entry = p.entry(label).or_insert((0.0, 0));
@@ -1244,9 +1385,14 @@ fn submit<'a>(this: &'a Engine, ops: &mut Vec<Op<'a>>) -> Result<Passing> {
 }
 
 fn self_mean(gpu: &Gpu, x: &Buffer, n: usize) -> Result<Vec<f32>> {
+    self_mean_at(gpu, x, n, 0)
+}
+
+/// The mean of token `token`'s four streams.
+fn self_mean_at(gpu: &Gpu, x: &Buffer, n: usize, token: usize) -> Result<Vec<f32>> {
     let stage = gpu.readback((4 * n * 4) as u64)?;
     let mut v = vec![0f32; 4 * n];
-    gpu.read_floats(x, 0, &stage, &mut v)?;
+    gpu.read_floats(x, (token * 4 * n * 4) as u64, &stage, &mut v)?;
     Ok((0..n)
         .map(|i| (0..4).map(|h| v[h * n + i]).sum::<f32>() / 4.0)
         .collect())

@@ -13,7 +13,13 @@ layout(set = 0, binding = 1) readonly buffer Bias { float bias[]; };
 layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
 layout(set = 0, binding = 3) coherent buffer Route { uvec4 route[]; };
 layout(set = 0, binding = 4) writeonly buffer Dev { uint dev[]; };
+#ifdef BATCHED
+// Batched: token t = workgroup z, its logits at t*experts, its ids and weights to
+// dev[t*2used ..] only (nothing to the host).
+layout(push_constant) uniform Constants { uint experts; uint used; float scale; } p;
+#else
 layout(push_constant) uniform Constants { uint experts; uint used; float scale; uint n; uint seq; } p;
+#endif
 
 shared float key[512];
 shared float prob[512];
@@ -22,9 +28,14 @@ shared uint words[32];
 
 void main() {
     uint e = gl_LocalInvocationIndex;
+#ifdef BATCHED
+    uint lb = gl_WorkGroupID.z * p.experts, db = gl_WorkGroupID.z * 2 * p.used;
+#else
+    uint lb = 0, db = 0;
+#endif
     float pr = 0.0, k = -1.0 / 0.0;
     if (e < p.experts) {
-        pr = 1.0 / (1.0 + exp(-logits[e]));
+        pr = 1.0 / (1.0 + exp(-logits[lb + e]));
         k = pr + bias[e];
     }
     key[e] = k;
@@ -47,10 +58,13 @@ void main() {
             uint wv = floatBitsToUint(prob[chosen[i]] / sum * p.scale);
             words[i] = chosen[i];
             words[p.used + i] = wv;
-            dev[i] = chosen[i];
-            dev[p.used + i] = wv;
+            dev[db + i] = chosen[i];
+            dev[db + p.used + i] = wv;
         }
     }
+#ifdef BATCHED
+    return;
+#else
     barrier();
     uint head = 2 * p.used / 4;   // uvec4s of ids and weights
     if (e < head) route[e] = uvec4(words[4 * e], words[4 * e + 1], words[4 * e + 2], words[4 * e + 3]);
@@ -61,4 +75,5 @@ void main() {
         memoryBarrierBuffer();
         route[head + p.n / 4] = uvec4(p.seq, 0, 0, 0);
     }
+#endif
 }

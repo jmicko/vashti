@@ -25,9 +25,16 @@ float sigmoid(float v) { return 1.0 / (1.0 + exp(-v)); }
 
 void main() {
     uint lane = gl_LocalInvocationIndex;
+#ifdef BATCHED
+    // Batched: token t = workgroup z (part at t*1024, X at t*4n, coef at t*32, normed at t*n).
+    uint t = gl_WorkGroupID.z;
+    uint pb = t * 1024, xb = t * 4 * p.n, cb = t * 32, nb = t * p.n;
+#else
+    uint pb = 0, xb = 0, cb = 0, nb = 0;
+#endif
     if (lane < 25) {
         float t = 0.0;
-        for (uint g = 0; g < p.chunks; g++) t += part[g * 32 + lane];
+        for (uint g = 0; g < p.chunks; g++) t += part[pb + g * 32 + lane];
         mixes[lane] = t;
     }
     barrier();
@@ -67,14 +74,14 @@ void main() {
         for (uint i = 0; i < 16; i++) c[4 + i] = comb[i];
     }
     barrier();
-    if (lane < 24) coef[lane] = c[lane];
+    if (lane < 24) coef[cb + lane] = c[lane];
     // The input and its norm: 16 values per lane.
     float v[16];
     float s2 = 0.0;
     for (uint k = 0; k < 16; k++) {
         uint i = lane + k * 256;
         float t = 0.0;
-        for (uint h = 0; h < 4; h++) t += x[h * p.n + i] * c[20 + h];
+        for (uint h = 0; h < 4; h++) t += x[xb + h * p.n + i] * c[20 + h];
         v[k] = t;
         s2 += t * t;
     }
@@ -86,6 +93,6 @@ void main() {
     float rs = 1.0 / sqrt(total / float(p.n) + p.rms_eps);
     for (uint k = 0; k < 16; k++) {
         uint i = lane + k * 256;
-        normed[i] = v[k] * rs * weight[i];
+        normed[nb + i] = v[k] * rs * weight[i];
     }
 }

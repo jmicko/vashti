@@ -1,0 +1,189 @@
+// The routed experts for a batch on cooperative matrices (as mmc.comp), from one source of
+// expert weights (the device's bank, or a host-visible chunk read across the bus): workgroup
+// (x, y, z) takes rows [x*128, +128) of the expert order[order_off + y] and its assignments
+// [z*64, +64). Per block of 256 columns the rows' weights are copied to shared memory (in
+// whole rows' runs, so reads across the bus stay sequential), then per 32 columns decoded to
+// halves beside the assignments' inputs.
+// Lists (group.comp): count [experts], first [experts] (multiples of 8), then the
+// assignments a = t*used + k by expert from `first`; results go to the assignment's position
+// in that list (rows past the count, up to a multiple of 8, get sums of zeros).
+// mode 0 (gate and up): rows 2ff of cols embd, x = token a / used's input (at t*cols).
+// mode 1 (down): rows embd of cols ff, x = the clamped SwiGLU (limit, as glu.comp) of the
+//   gate|up results at the position (at pos*2*cols).
+// y at pos*rows. Weights and scales of slot sl at words w_base + sl*w_stride and
+// s_base + sl*s_stride; kinds as in mve.comp.
+#version 460
+#extension GL_KHR_cooperative_matrix : require
+#extension GL_KHR_memory_scope_semantics : require
+#extension GL_EXT_shader_explicit_arithmetic_types : require
+#extension GL_KHR_shader_subgroup_basic : require
+#extension GL_EXT_spirv_intrinsics : require
+
+spirv_execution_mode(extensions = ["SPV_KHR_float_controls"], 4459, 16);
+
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uint w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) writeonly buffer Y { float y[]; };
+layout(set = 0, binding = 4) readonly buffer Order { uint order[]; };
+layout(set = 0, binding = 5) readonly buffer Lists { uint lists[]; };
+layout(set = 0, binding = 6) readonly buffer Tables { uint grid2[2048]; uint grid3[512]; };
+layout(push_constant) uniform Constants {
+    uint mode; uint kind; uint rows; uint cols; uint used; uint experts; uint order_off;
+    uint w_base; uint w_stride; uint s_base; uint s_stride; float limit;
+} p;
+
+shared uint ws[128 * 34];
+shared float ds[128];
+shared uvec4 sa[256];
+shared uvec4 sb[512];
+
+#define A coopmat<float16_t, gl_ScopeSubgroup, 8, 16, gl_MatrixUseA>
+#define B coopmat<float16_t, gl_ScopeSubgroup, 16, 16, gl_MatrixUseB>
+#define C coopmat<float, gl_ScopeSubgroup, 8, 16, gl_MatrixUseAccumulator>
+
+const float IQ4NL[16] = float[16](-127, -104, -83, -65, -49, -35, -22, -10, 1, 13, 25, 38, 53, 69, 89, 113);
+
+uint byte_of(uint word, uint i) { return (word >> (8 * i)) & 255u; }
+float sgn(uint sg, uint bit) { return (sg & (1u << bit)) != 0 ? -1.0 : 1.0; }
+
+uvec4 pack8(vec4 a, vec4 b) {
+    return uvec4(packHalf2x16(a.xy), packHalf2x16(a.zw), packHalf2x16(b.xy), packHalf2x16(b.zw));
+}
+
+// Half h (16 values) of sub-block ib of the block at shared word wb (scale d), as halves.
+void decode16(uint wb, float d, uint ib, uint h, out uvec4 o0, out uvec4 o1) {
+    vec4 v[4];
+    if (p.kind == 0) {
+        uint qs = ws[wb + ib], signs = ws[wb + 8 + ib];
+        uint qh = byte_of(ws[wb + 16 + ib / 4], ib % 4);
+        uint sc = byte_of(ws[wb + 18 + ib / 4], ib % 4);
+        for (uint j = 0; j < 2; j++) {
+            uint l = 2 * h + j;
+            uint idx = byte_of(qs, l) | (((qh >> (2 * l)) & 3u) << 8);
+            uint g0 = grid2[2 * idx], g1 = grid2[2 * idx + 1];
+            uint sg = byte_of(signs, l);
+            float scale = (float(l < 2 ? (sc & 15u) : (sc >> 4)) * 0.25 + 0.125) * d;
+            v[2 * j] = vec4(byte_of(g0, 0), byte_of(g0, 1), byte_of(g0, 2), byte_of(g0, 3))
+                * vec4(sgn(sg, 0), sgn(sg, 1), sgn(sg, 2), sgn(sg, 3)) * scale;
+            v[2 * j + 1] = vec4(byte_of(g1, 0), byte_of(g1, 1), byte_of(g1, 2), byte_of(g1, 3))
+                * vec4(sgn(sg, 4), sgn(sg, 5), sgn(sg, 6), sgn(sg, 7)) * scale;
+        }
+    } else if (p.kind == 1) {
+        uint q = ws[wb + 2 * ib + h];
+        uint qh = byte_of(ws[wb + 16 + ib / 4], ib % 4);
+        uint signs = ws[wb + 18 + ib];
+        uint sc = (byte_of(ws[wb + 26], ib / 2) >> (4 * (ib % 2))) & 15u;
+        float scale = d * float(1 + 2 * sc);
+        for (uint j = 0; j < 4; j++) {
+            uint l = 4 * h + j;
+            uint idx = byte_of(q, j) | (((qh >> l) & 1u) << 8);
+            uint g = grid3[idx];
+            uint sg = byte_of(signs, l / 2) >> (4 * (l % 2));
+            v[j] = vec4(byte_of(g, 0), byte_of(g, 1), byte_of(g, 2), byte_of(g, 3))
+                * vec4(sgn(sg, 0), sgn(sg, 1), sgn(sg, 2), sgn(sg, 3)) * scale;
+        }
+    } else {
+        uint h0 = ws[wb];
+        float dd = unpackHalf2x16(h0).x;
+        uint sh = h0 >> 16;
+        uint sl = byte_of(ws[wb + 1 + ib / 8], (ib / 2) % 4);
+        int ls = int(((sl >> (4 * (ib % 2))) & 15u) | (((sh >> (2 * ib)) & 3u) << 4)) - 32;
+        float scale = dd * float(ls);
+        for (uint q = 0; q < 4; q++) {
+            uint u = ws[wb + 2 + ib * 4 + q] >> (4 * h);
+            v[q] = vec4(IQ4NL[u & 15u], IQ4NL[(u >> 8) & 15u], IQ4NL[(u >> 16) & 15u], IQ4NL[(u >> 24) & 15u]) * scale;
+        }
+    }
+    o0 = pack8(v[0], v[1]);
+    o1 = pack8(v[2], v[3]);
+}
+
+void main() {
+    uint e = order[p.order_off + gl_WorkGroupID.y];
+    if (e >= p.experts) return;
+    uint count = lists[e];
+    uint start = gl_WorkGroupID.z * 64;
+    if (start >= count) return;
+    uint first = lists[p.experts + e];
+    uint sl = gl_WorkGroupID.y;
+    uint lane = gl_LocalInvocationIndex, sg = gl_SubgroupID;
+    uint r0 = gl_WorkGroupID.x * 128;
+    uint words = p.kind == 0 ? 20 : (p.kind == 1 ? 27 : 34);
+    uint blocks = p.cols / 256;
+    // This lane's input: 8 values of the assignment at slot at.
+    uint at = lane / 4, aq = lane % 4;
+    bool ain = start + at < count;
+    uint pos = first + start + at;
+    uint abase = 0;
+    if (ain) {
+        uint row = p.mode == 0 ? lists[2 * p.experts + pos] / p.used : pos;
+        abase = row * (p.cols / 4) * (p.mode == 0 ? 1 : 2) + aq * 2;
+    }
+    uint br = lane / 2, bh = lane % 2;
+    uint tg = sg / 8, rg = sg % 8;
+    uint wslot = p.w_base + sl * p.w_stride + r0 * blocks * words;
+    uint shalf = 2 * (p.s_base + sl * p.s_stride) + r0 * blocks;
+    C c0 = C(0.0), c1 = C(0.0), c2 = C(0.0), c3 = C(0.0);
+    A a0, a1, a2, a3;
+    B b;
+    for (uint blk = 0; blk < blocks; blk++) {
+        barrier();
+        // The 128 rows' words of this block: row i's run at wslot + (i*blocks + blk)*words.
+        for (uint i = lane; i < 128 * words; i += 256) {
+            uint r = i / words, wi = i % words;
+            ws[i] = w[wslot + (r * blocks + blk) * words + wi];
+        }
+        if (lane < 128 && p.kind != 2) {
+            uint hi = shalf + lane * blocks + blk;
+            ds[lane] = unpackHalf2x16(s[hi >> 1])[hi & 1];
+        }
+        barrier();
+        for (uint ib = 0; ib < 8; ib++) {
+            uint k0 = blk * 256 + ib * 32;
+            vec4 v0 = vec4(0.0), v1 = vec4(0.0);
+            if (ain) {
+                v0 = x[abase + k0 / 4];
+                v1 = x[abase + k0 / 4 + 1];
+                if (p.mode == 1) {
+                    vec4 u0 = x[abase + (p.cols + k0) / 4], u1 = x[abase + (p.cols + k0) / 4 + 1];
+                    if (p.limit > 1e-6) {
+                        v0 = min(v0, p.limit);
+                        v1 = min(v1, p.limit);
+                        u0 = clamp(u0, -p.limit, p.limit);
+                        u1 = clamp(u1, -p.limit, p.limit);
+                    }
+                    v0 = v0 / (1.0 + exp(-v0)) * u0;
+                    v1 = v1 / (1.0 + exp(-v1)) * u1;
+                }
+            }
+            uvec4 pa = pack8(v0, v1);
+            uvec4 pb0, pb1;
+            decode16(br * words, p.kind == 2 ? 0.0 : ds[br], ib, bh, pb0, pb1);
+            barrier();
+            sa[lane] = pa;
+            sb[br * 4 + bh * 2] = pb0;
+            sb[br * 4 + bh * 2 + 1] = pb1;
+            barrier();
+            for (uint kk = 0; kk < 2; kk++) {
+                uint ao = tg * 32 * 4 + kk * 2;
+                coopMatLoad(a0, sa, ao, 4, gl_CooperativeMatrixLayoutRowMajor);
+                coopMatLoad(a1, sa, ao + 32, 4, gl_CooperativeMatrixLayoutRowMajor);
+                coopMatLoad(a2, sa, ao + 64, 4, gl_CooperativeMatrixLayoutRowMajor);
+                coopMatLoad(a3, sa, ao + 96, 4, gl_CooperativeMatrixLayoutRowMajor);
+                coopMatLoad(b, sb, rg * 16 * 4 + kk * 2, 4, gl_CooperativeMatrixLayoutColumnMajor);
+                c0 = coopMatMulAdd(a0, b, c0);
+                c1 = coopMatMulAdd(a1, b, c1);
+                c2 = coopMatMulAdd(a2, b, c2);
+                c3 = coopMatMulAdd(a3, b, c3);
+            }
+        }
+    }
+    uint j = start + tg * 32;
+    uint o = (first + j) * p.rows + r0 + rg * 16, st = p.rows;
+    if (j < count) coopMatStore(c0, y, o, st, gl_CooperativeMatrixLayoutRowMajor);
+    if (j + 8 < count) coopMatStore(c1, y, o + 8 * st, st, gl_CooperativeMatrixLayoutRowMajor);
+    if (j + 16 < count) coopMatStore(c2, y, o + 16 * st, st, gl_CooperativeMatrixLayoutRowMajor);
+    if (j + 24 < count) coopMatStore(c3, y, o + 24 * st, st, gl_CooperativeMatrixLayoutRowMajor);
+}

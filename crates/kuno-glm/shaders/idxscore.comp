@@ -7,19 +7,33 @@ layout(set = 0, binding = 0) readonly buffer Iq { float iq[]; };     // [32][128
 layout(set = 0, binding = 1) readonly buffer W { float w[]; };       // [32] (at w_off)
 layout(set = 0, binding = 2) readonly buffer Pooled { vec4 pooled[]; };
 layout(set = 0, binding = 3) writeonly buffer Score { float score[]; };
+#ifdef BATCHED
+// Batched: token t = workgroup z at position pos + t, scoring its own complete pools when it
+// is indexed (more than `keep` of them); iq at t*4096, w at t*w_st + w_off, score at t*score_st.
+layout(push_constant) uniform Constants { uint pools; float wscale; uint w_off; uint pos; uint keep; uint kpool; uint w_st; uint score_st; } p;
+#else
 layout(push_constant) uniform Constants { uint pools; float wscale; uint w_off; } p;
+#endif
 
 shared vec4 q[32 * 32];
 shared float hw[32];
 
 void main() {
     uint lane = gl_LocalInvocationIndex;
+#ifdef BATCHED
+    uint t = gl_WorkGroupID.z;
+    uint pools = (p.pos + t + 1) / p.kpool;
+    if (pools <= p.keep) return;
+    uint qb = t * 4096, wb = t * p.w_st + p.w_off, sb = t * p.score_st;
+#else
+    uint pools = p.pools, qb = 0, wb = p.w_off, sb = 0;
+#endif
     for (uint i = lane; i < 32 * 32; i += 128)
-        q[i] = vec4(iq[4 * i], iq[4 * i + 1], iq[4 * i + 2], iq[4 * i + 3]);
-    if (lane < 32) hw[lane] = w[p.w_off + lane] * p.wscale;
+        q[i] = vec4(iq[qb + 4 * i], iq[qb + 4 * i + 1], iq[qb + 4 * i + 2], iq[qb + 4 * i + 3]);
+    if (lane < 32) hw[lane] = w[wb + lane] * p.wscale;
     barrier();
     uint b = gl_WorkGroupID.x * 128 + lane;
-    if (b >= p.pools) return;
+    if (b >= pools) return;
     vec4 k[32];
     for (uint c = 0; c < 32; c++) k[c] = pooled[b * 32 + c];
     float s = 0.0;
@@ -28,5 +42,5 @@ void main() {
         for (uint c = 0; c < 32; c++) d += dot(q[h * 32 + c], k[c]);
         s += max(d, 0.0) * hw[h];
     }
-    score[b] = s;
+    score[sb + b] = s;
 }

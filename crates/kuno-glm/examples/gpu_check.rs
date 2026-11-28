@@ -39,6 +39,90 @@ fn main() {
         .unwrap_or(2048);
     let mut engine = Engine::new(&model, gpu, second, ctx).unwrap();
     eprintln!("engine ready in {:.1} s", t.elapsed().as_secs_f64());
+    if std::env::var_os("KUNO_GLM_PREFILL_REF").is_some() {
+        // The prompt in batches against the CPU reference (exact experts): per block the last
+        // token's streams (mean), and both next tokens.
+        let mut reference = Reference::new(&model).unwrap();
+        let mut logits = Vec::new();
+        for (i, &id) in ids.iter().enumerate() {
+            logits = reference
+                .step(id, i + 1 == ids.len())
+                .unwrap()
+                .unwrap_or_default();
+        }
+        // SAFETY: the variable is read by this process only, before the next prefill.
+        unsafe { std::env::set_var("KUNO_GLM_TRACE_BATCH", "1") };
+        engine.trace = Some(Vec::new());
+        let next = engine.prefill(&ids).unwrap();
+        let got = engine.trace.clone().unwrap();
+        let mut worst = 0f32;
+        for (b, (g, w)) in got.iter().zip(&reference.trace).enumerate() {
+            let scale = w.iter().map(|v| v.abs()).fold(0f32, f32::max).max(1e-9);
+            let d = g
+                .iter()
+                .zip(w)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0f32, f32::max)
+                / scale;
+            worst = worst.max(d);
+            println!("block {b}: {d:.2e}");
+        }
+        let best =
+            logits.iter().enumerate().fold(
+                (0, f32::MIN),
+                |b, (i, v)| if *v > b.1 { (i, *v) } else { b },
+            );
+        println!(
+            "worst {worst:.2e}; batched next {next}, reference next {}",
+            best.0
+        );
+        return;
+    }
+    if std::env::var_os("KUNO_GLM_PREFILL_CHECK").is_some() {
+        // The prompt a token at a time, then again in batches: per block the last token's
+        // streams (mean) compared, the next tokens, and a few greedy tokens after.
+        let greedy = |engine: &mut Engine, first: u32| -> Vec<u32> {
+            let mut out = vec![first];
+            for _ in 0..8 {
+                out.push(engine.step(*out.last().unwrap()).unwrap());
+            }
+            out
+        };
+        engine.trace = Some(Vec::new());
+        let t = std::time::Instant::now();
+        let mut next = 0;
+        for &id in &ids {
+            next = engine.step(id).unwrap();
+        }
+        let seq_s = t.elapsed().as_secs_f64();
+        let want = engine.trace.clone().unwrap();
+        engine.trace = None;
+        let seq = greedy(&mut engine, next);
+        engine.reset().unwrap();
+        // SAFETY: the variable is read by this process only, before the next prefill.
+        unsafe { std::env::set_var("KUNO_GLM_TRACE_BATCH", "1") };
+        engine.trace = Some(Vec::new());
+        let t = std::time::Instant::now();
+        let next_b = engine.prefill(&ids).unwrap();
+        let batch_s = t.elapsed().as_secs_f64();
+        let got = engine.trace.clone().unwrap();
+        engine.trace = None;
+        for (b, (g, w)) in got.iter().zip(&want).enumerate() {
+            let scale = w.iter().map(|v| v.abs()).fold(0f32, f32::max).max(1e-9);
+            let d = g
+                .iter()
+                .zip(w)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0f32, f32::max)
+                / scale;
+            let nans = g.iter().filter(|v| !v.is_finite()).count();
+            println!("block {b}: {d:.2e}, {nans} non-finite");
+        }
+        let bat = greedy(&mut engine, next_b);
+        println!("sequential {seq_s:.1} s: {seq:?}");
+        println!("batched {batch_s:.1} s (traced): {bat:?}");
+        return;
+    }
     if let Some(extra) = std::env::var("KUNO_GLM_BENCH")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -47,7 +131,18 @@ fn main() {
         let mut next = 0;
         let mut times = Vec::new();
         let mut out = Vec::new();
+        let batched = std::env::var_os("KUNO_GLM_PREFILL").is_some();
+        if batched {
+            let t = std::time::Instant::now();
+            next = engine.prefill(&ids).unwrap();
+            let s = t.elapsed().as_secs_f64();
+            times = vec![s / ids.len() as f64; ids.len()];
+            out.push(next);
+        }
         for (i, &id) in ids.iter().chain(std::iter::repeat_n(&0, extra)).enumerate() {
+            if batched && i < ids.len() {
+                continue;
+            }
             let id = if i < ids.len() { id } else { next };
             let t = std::time::Instant::now();
             next = engine.step(id).unwrap();

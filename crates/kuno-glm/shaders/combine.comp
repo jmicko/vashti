@@ -1,0 +1,21 @@
+// The routed experts' sum per token: out[t*n + i] = sum over k < used, in order, of token
+// t's k-th weight times gd[pos*n + i], pos the assignment's position (group.comp's lists).
+#version 460
+layout(local_size_x = 256) in;
+layout(set = 0, binding = 0) readonly buffer Gd { float gd[]; };
+layout(set = 0, binding = 1) writeonly buffer Out { float o[]; };
+layout(set = 0, binding = 2) readonly buffer Routed { uint routed[]; };
+layout(set = 0, binding = 3) readonly buffer Lists { uint lists[]; };
+layout(push_constant) uniform Constants { uint n; uint used; uint total; uint experts; uint lp; } p;
+
+void main() {
+    uint g = gl_GlobalInvocationID.y * 65535u * 256u + gl_GlobalInvocationID.x;
+    if (g >= p.total) return;
+    uint t = g / p.n, i = g % p.n;
+    float sum = 0.0;
+    for (uint k = 0; k < p.used; k++) {
+        uint pos = lists[2 * p.experts + p.lp + t * p.used + k];
+        sum += uintBitsToFloat(routed[t * 2 * p.used + p.used + k]) * gd[pos * p.n + i];
+    }
+    o[g] = sum;
+}
