@@ -92,7 +92,8 @@ impl Qwen35Tokenizer {
         limits: TokenizerLimits,
     ) -> Result<Self> {
         let pre = text(metadata, "tokenizer.ggml.pre")?;
-        let lfm2 = pre == "lfm2";
+        // glm4 (GLM 5) is llama.cpp's LLAMA3 expression with ignore_merges, as lfm2.
+        let lfm2 = pre == "lfm2" || pre == "glm4";
         if text(metadata, "tokenizer.ggml.model")? != "gpt2" || (pre != "qwen35" && !lfm2) {
             return Err(Error::InvalidFormat(
                 "unsupported tokenizer model or pretokenizer",

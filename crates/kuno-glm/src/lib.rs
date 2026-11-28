@@ -156,6 +156,12 @@ impl Model {
     }
 
     /// A weight's packed bytes and layout (`rows` rows of `cols` values).
+    /// The model's tokenizer (GPT2 byte-level BPE, `glm4` pre-tokenizer).
+    pub fn tokenizer(&self) -> Result<kuno_text::Qwen35Tokenizer> {
+        kuno_text::Qwen35Tokenizer::from_gguf(&self.gguf, kuno_text::TokenizerLimits::default())
+            .map_err(|_| "model_tokenizer_invalid")
+    }
+
     pub fn matrix(&self, name: &str) -> Result<Matrix> {
         let view = self.gguf.tensor(name).ok_or("model_tensor_missing")?;
         let info = view.info();

@@ -175,6 +175,19 @@ pub(crate) fn configured_gateway_unit(
             "\n[Unit]\nRequiresMountsFor=\"{source}\"\n\n[Service]\nBindReadOnlyPaths=\"{source}\":/var/lib/kuno/audio-models\n"
         ));
     }
+    if let Some(glm) = &config.glm {
+        let source = glm.models.to_str().ok_or("glm_model_path_invalid")?;
+        if !source.starts_with('/') || source.chars().any(|c| c.is_control() || c == ':') {
+            return Err("glm_model_path_invalid");
+        }
+        let source = source
+            .replace('\\', "\\\\")
+            .replace('"', "\\\"")
+            .replace('%', "%%");
+        unit.push_str(&format!(
+            "\n[Unit]\nRequiresMountsFor=\"{source}\"\n\n[Service]\nBindReadOnlyPaths=\"{source}\":/var/lib/kuno/glm-models\n"
+        ));
+    }
     Ok(unit)
 }
 

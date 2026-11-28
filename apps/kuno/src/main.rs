@@ -3,7 +3,7 @@ use std::{path::Path, time::Duration};
 use tokio::net::TcpListener;
 
 const HELP: &str = "Kuno — local inference gateway (development)\n\n\
-Usage:\n  kuno [--host URL] [--config FILE] run MODEL [PROMPT] [OLLAMA_OPTIONS]\n  kuno [--host URL] [--config FILE] COMMAND [ARGS]\n    Commands: list (ls), ps, show, pull, push, stop, cp, rm, create\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service] [--cli-user USER]\n  kuno upgrade [--yes] [--cli-user USER]\n  kuno configure-cli [--user USER]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno configure-audio (--models ABSOLUTE_DIRECTORY [--gpu PCI_ADDRESS] | --disable) [--yes]\n  kuno configure-native-text (--settings FILE | --disable) [--yes]\n  kuno configure-timeouts [--response-headers SECONDS] [--stream-idle SECONDS] [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
+Usage:\n  kuno [--host URL] [--config FILE] run MODEL [PROMPT] [OLLAMA_OPTIONS]\n  kuno [--host URL] [--config FILE] COMMAND [ARGS]\n    Commands: list (ls), ps, show, pull, push, stop, cp, rm, create\n  kuno fetch-models COLLECTION --directory ABSOLUTE_DIRECTORY\n  kuno serve [--config FILE]\n  kuno resources [--config FILE]\n  kuno check [--config FILE]\n  kuno doctor [--service ollama.service]\n  kuno install [--yes] [--service ollama.service] [--cli-user USER]\n  kuno upgrade [--yes] [--cli-user USER]\n  kuno configure-cli [--user USER]\n  kuno configure-managed (--workers FILE | --disable) [--yes]\n  kuno configure-image (--settings FILE | --disable) [--yes]\n  kuno configure-audio (--models ABSOLUTE_DIRECTORY [--gpu PCI_ADDRESS] | --disable) [--yes]\n  kuno configure-glm (--models ABSOLUTE_DIRECTORY [--gpu PCI_ADDRESS] [--context TOKENS] | --disable) [--yes]\n  kuno configure-native-text (--settings FILE | --disable) [--yes]\n  kuno configure-timeouts [--response-headers SECONDS] [--stream-idle SECONDS] [--yes]\n  kuno recover [--yes]\n  kuno takeover-restore [--yes]\n  kuno takeover-plan [--config FILE] [--service ollama.service]\n  kuno takeover-bundle --output NEW_DIRECTORY [--config FILE] [--service ollama.service]\n\n\
 Inference CLI endpoint: --host, KUNO_HOST, selected/installed config.listen, then 127.0.0.1:11434.\n\
 The original Ollama client is required on PATH; its readline history starts disabled.\n\
 OLLAMA_HOST never selects Kuno's CLI endpoint.\n\
@@ -25,6 +25,8 @@ fn main() {
     // threads must inherit its filesystem policy from this initial thread.
     let result = if std::env::args().nth(1).as_deref() == Some("audio-worker") {
         kuno::audio::run_worker()
+    } else if std::env::args().nth(1).as_deref() == Some("glm-worker") {
+        kuno::glm::run_worker()
     } else if std::env::args().nth(1).as_deref() == Some("image-worker") {
         run_image_worker()
     } else if std::env::args().nth(1).as_deref() == Some("image-worker-resident") {
@@ -165,6 +167,40 @@ async fn run() -> Result<(), &'static str> {
             .await
             .map_err(|_| "native_configuration_task_failed")??;
         println!("native_text_configuration_active");
+        return Ok(());
+    }
+    if command == "configure-glm" {
+        let mut glm = match args.next().as_deref() {
+            Some("--disable") => None,
+            Some("--models") => Some(kuno::glm::Config {
+                model: "kuno-glm-5.3-flash:iq3_xxs".into(),
+                models: std::path::PathBuf::from(args.next().ok_or("missing_glm_models")?),
+                pci_address: "0000:2d:00.0".into(),
+                context: kuno::native_protocol::MAX_CONTEXT,
+            }),
+            _ => return Err("missing_glm_configuration"),
+        };
+        let mut yes = false;
+        while let Some(arg) = args.next() {
+            match (arg.as_str(), glm.as_mut()) {
+                ("--gpu", Some(glm)) => {
+                    glm.pci_address = args.next().ok_or("missing_glm_gpu")?;
+                }
+                ("--context", Some(glm)) => {
+                    glm.context = args
+                        .next()
+                        .and_then(|v| v.parse().ok())
+                        .ok_or("glm_context_invalid")?;
+                }
+                ("--yes", _) => yes = true,
+                _ => return Err("unknown_argument"),
+            }
+        }
+        confirm_interruption(yes)?;
+        tokio::task::spawn_blocking(move || systemd::configure_glm(glm))
+            .await
+            .map_err(|_| "glm_configuration_task_failed")??;
+        println!("glm_configuration_active");
         return Ok(());
     }
     if command == "configure-audio" {
@@ -506,6 +542,9 @@ async fn serve(mut config: Config) -> Result<(), &'static str> {
         }
         if let Some(audio) = &mut config.audio {
             audio.models = config.state_dir.join("audio-models");
+        }
+        if let Some(glm) = &mut config.glm {
+            glm.models = config.state_dir.join("glm-models");
         }
         let client = reqwest::Client::builder()
             .no_proxy()

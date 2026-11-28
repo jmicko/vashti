@@ -60,6 +60,9 @@ pub(super) fn submit_sync<'a>(
 
 /// The shortest prompt worth a batch.
 pub(super) const MIN_BATCH: usize = 32;
+/// Prompts shorter than this run as small batches (with the NextN block): measured, 73
+/// tokens 4.0 s small vs 8.0 s batched, 139: 6.2 vs 8.1, 280: 10.7 vs 7.8.
+pub(super) const SMALL_PROMPT: usize = 160;
 
 impl<'m> Engine<'m> {
     /// Runs `tokens` at the next positions, a batch at a time (or one at a time when the
@@ -82,8 +85,19 @@ impl<'m> Engine<'m> {
         }
         // Equal batches (no short tail); a prompt under MIN_BATCH tokens runs a token at a
         // time (a batch streams every host expert across the bus, whatever its length).
-        let count = tokens.len().div_ceil(self.batch);
-        let size = tokens.len().div_ceil(count.max(1)).max(1);
+        // With the NextN block, prompts under KUNO_GLM_SMALL_PROMPT tokens (default
+        // SMALL_PROMPT) run as small batches instead: their CPU experts cost less than the
+        // ~6 s a batch spends streaming the host's experts.
+        let small: usize = std::env::var("KUNO_GLM_SMALL_PROMPT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(SMALL_PROMPT);
+        let size = if self.mtp.is_some() && tokens.len() < small {
+            MIN_BATCH - 1
+        } else {
+            let count = tokens.len().div_ceil(self.batch);
+            tokens.len().div_ceil(count.max(1)).max(1)
+        };
         for chunk in tokens.chunks(size) {
             if chunk.len() < MIN_BATCH && self.mtp.is_some() {
                 // A small batch (the NextN block follows it).
@@ -679,6 +693,7 @@ impl<'m> Engine<'m> {
             groups: [1, 1, 1],
             independent: false,
         });
+        this.logits_out(&mut ops, &s.logits, 1);
         this.mtp_follow(&mut ops, t, pos, Some(t - 1));
         let last = submit(this, &mut ops)?;
         for p in pending.drain(..) {

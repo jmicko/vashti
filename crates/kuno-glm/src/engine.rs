@@ -9,7 +9,9 @@ use crate::{Matrix, Model, Result};
 
 mod batch;
 mod pipe;
+mod serve;
 mod spec;
+pub use serve::Sampler;
 pub use spec::SpecStats;
 pub use spec::uses_report;
 
@@ -208,6 +210,15 @@ pub struct Engine<'m> {
     mpart: Buffer,
     hall: Buffer,
     logits_t: Buffer,
+    /// With `sampling`, each pass's logits for the host (as many rows as the pass decides).
+    logits_host: Mapped,
+    sampling: std::sync::atomic::AtomicBool,
+    logits_rows: std::sync::atomic::AtomicUsize,
+    /// A saved point of the sequence (`serve`): per KDA block its state and history, the
+    /// NextN block's h, and the position.
+    saved: Vec<Option<Buffer>>,
+    saved_last: Option<Buffer>,
+    saved_pos: Option<usize>,
     vin: Mapped,
     /// The last verification sequence word written into `vin`.
     vseq: std::sync::atomic::AtomicU32,
@@ -727,6 +738,12 @@ impl<'m> Engine<'m> {
             hall: gpu.buffer((batch * n * 4) as u64)?,
             mpart: gpu.buffer((16 * hp.heads * 514 * 4) as u64)?,
             logits_t: gpu.buffer((spec::SMALL * hp.vocab * 4) as u64)?,
+            logits_host: gpu.mapped((spec::SMALL * hp.vocab * 4) as u64)?,
+            sampling: std::sync::atomic::AtomicBool::new(false),
+            logits_rows: std::sync::atomic::AtomicUsize::new(0),
+            saved: Vec::new(),
+            saved_last: None,
+            saved_pos: None,
             // (+ the verification's sequence word)
             vin: gpu.mapped(((spec::SMALL * (2 * hp.experts_used + n) + 4) * 4) as u64)?,
             vseq: std::sync::atomic::AtomicU32::new(0),
@@ -911,6 +928,7 @@ impl<'m> Engine<'m> {
             groups: [1, 1, 1],
             independent: false,
         });
+        this.logits_out(&mut ops, &s.logits, 1);
         let last = submit(this, &mut ops)?;
         for p in pending.drain(..) {
             p.wait()?;

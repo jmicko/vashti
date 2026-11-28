@@ -781,6 +781,7 @@ fn validate_installed_config(original: &Config, current: &Config) -> Result<()> 
     expected.image = None;
     expected.native_text = None;
     expected.audio = None;
+    expected.glm = None;
     expected.response_header_timeout_seconds = current.response_header_timeout_seconds;
     expected.stream_idle_timeout_seconds = current.stream_idle_timeout_seconds;
     let mut actual = current.clone();
@@ -788,6 +789,7 @@ fn validate_installed_config(original: &Config, current: &Config) -> Result<()> 
     actual.image = None;
     actual.native_text = None;
     actual.audio = None;
+    actual.glm = None;
     if serde_json::to_value(expected).map_err(|_| "config_encoding_failed")?
         != serde_json::to_value(actual).map_err(|_| "config_encoding_failed")?
     {
@@ -861,6 +863,33 @@ pub fn configure_audio(audio: Option<crate::config::AudioConfig>) -> Result<()> 
         crate::collections::verify(&audio.models, kuno_protocol::AUDIO_COLLECTION)?;
     }
     installation.config.audio = audio;
+    installation.config.validate()?;
+    let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
+        .map_err(|_| "executable_unavailable")?;
+    transaction.replace(
+        &artifacts(&installation, executable)?,
+        &mut SystemdHost { installation },
+    )
+}
+
+/// GLM 5.3 Flash (the shards in `models`, bound read-only into the service).
+pub fn configure_glm(glm: Option<crate::glm::Config>) -> Result<()> {
+    require_root()?;
+    let transaction = Transaction::open(Path::new("/"), Path::new(SETUP))?;
+    transaction.verify_installed()?;
+    let mut installation = current_installation()?;
+    if let Some(glm) = &glm {
+        glm.validate()?;
+        let shards = fs::read_dir(&glm.models)
+            .map_err(|_| "glm_models_unavailable")?
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().extension().is_some_and(|x| x == "gguf"))
+            .count();
+        if shards == 0 {
+            return Err("glm_models_unavailable");
+        }
+    }
+    installation.config.glm = glm;
     installation.config.validate()?;
     let executable = fs::read(std::env::current_exe().map_err(|_| "executable_unavailable")?)
         .map_err(|_| "executable_unavailable")?;
@@ -1602,6 +1631,7 @@ mod tests {
             state_dir: "/var/lib/kuno".into(),
             activation_file: Some(READY.into()),
             native_text: None,
+            glm: None,
             audio: None,
             max_waiting: 17,
             queue_timeout_seconds: 57,

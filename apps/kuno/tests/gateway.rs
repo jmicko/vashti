@@ -96,6 +96,7 @@ impl Fixture {
             managed,
             image,
             native_text: None,
+            glm: None,
             audio: None,
         };
         let base = format!("http://{}", config.listen);

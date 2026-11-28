@@ -94,7 +94,15 @@ pub struct Gateway {
     image_readiness: Arc<crate::image_access::ImageReadiness>,
     image_fast_attention: bool,
     native_runtime: crate::native_text::Runtime,
+    glm_runtime: crate::native_text::Runtime,
     image_runtime: crate::image_residency::ImageRuntime,
+}
+
+/// The native text models: the configured `native_text` one and GLM.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Native {
+    Qwen,
+    Glm,
 }
 
 impl Gateway {
@@ -173,6 +181,7 @@ impl Gateway {
             image_readiness,
             image_fast_attention,
             native_runtime: Default::default(),
+            glm_runtime: Default::default(),
             image_runtime: Default::default(),
         }))
     }
@@ -192,7 +201,40 @@ impl Gateway {
         self.image_shutdown.send_replace(true);
     }
     pub async fn evict_native_text(&self) -> Result<(), &'static str> {
-        self.native_runtime.evict().await
+        self.native_runtime.evict().await?;
+        self.glm_runtime.evict().await
+    }
+    fn native(&self, native: Native) -> &crate::native_text::Runtime {
+        match native {
+            Native::Qwen => &self.native_runtime,
+            Native::Glm => &self.glm_runtime,
+        }
+    }
+    /// The native model a request names, if any.
+    fn native_named(&self, name: &str) -> Option<Native> {
+        if self
+            .config
+            .native_text
+            .as_ref()
+            .is_some_and(|c| c.model == name)
+        {
+            Some(Native::Qwen)
+        } else if self.config.glm.as_ref().is_some_and(|c| c.model == name) {
+            Some(Native::Glm)
+        } else {
+            None
+        }
+    }
+    /// Catalog entries (`/api/tags` form) and names of the native models.
+    fn native_catalog_entries(&self) -> Vec<(String, serde_json::Value)> {
+        let mut v = Vec::new();
+        if let Some(c) = &self.config.native_text {
+            v.push((c.model.clone(), c.metadata()));
+        }
+        if let Some(c) = &self.config.glm {
+            v.push((c.model.clone(), c.metadata()));
+        }
+        v
     }
     pub async fn evict_images(&self) -> Result<(), &'static str> {
         self.image_runtime.evict().await
@@ -719,7 +761,7 @@ async fn generate_image(State(gateway): State<Arc<Gateway>>, request: Request) -
                 .managed
                 .as_ref()
                 .ok_or("image_requires_managed_pool")?;
-            gateway.native_runtime.evict().await?;
+            gateway.evict_native_text().await?;
             pool.prepare_image(&config.pci_address).await?;
             let executable = std::env::current_exe().map_err(|_| "executable_unavailable")?;
             let finished = gateway
@@ -864,7 +906,7 @@ async fn generate_video(State(gateway): State<Arc<Gateway>>, request: Request) -
                 .managed
                 .as_ref()
                 .ok_or("image_requires_managed_pool")?;
-            gateway.native_runtime.evict().await?;
+            gateway.evict_native_text().await?;
             pool.prepare_image(&config.pci_address).await?;
             let executable = std::env::current_exe().map_err(|_| "executable_unavailable")?;
             let job = crate::image_residency::Job::Video(recipe, progress);
@@ -964,7 +1006,7 @@ async fn proxy(State(gateway): State<Arc<Gateway>>, request: Request) -> Respons
     if request.method() == Method::CONNECT || request.headers().contains_key(header::UPGRADE) {
         return error(StatusCode::NOT_IMPLEMENTED, "protocol_upgrade_unsupported");
     }
-    if gateway.config.native_text.is_some()
+    if (gateway.config.native_text.is_some() || gateway.config.glm.is_some())
         && request.method() == Method::GET
         && matches!(request.uri().path(), "/api/tags" | "/v1/models")
     {
@@ -977,11 +1019,17 @@ async fn proxy(State(gateway): State<Arc<Gateway>>, request: Request) -> Respons
     {
         return match pool.running().await {
             Ok(mut report) => {
-                if gateway.native_runtime.resident()
-                    && let Some(config) = &gateway.config.native_text
-                    && let Some(models) = report["models"].as_array_mut()
-                {
-                    models.push(config.metadata());
+                if let Some(models) = report["models"].as_array_mut() {
+                    if gateway.native_runtime.resident()
+                        && let Some(config) = &gateway.config.native_text
+                    {
+                        models.push(config.metadata());
+                    }
+                    if gateway.glm_runtime.resident()
+                        && let Some(config) = &gateway.config.glm
+                    {
+                        models.push(config.metadata());
+                    }
                 }
                 Json(report).into_response()
             }
@@ -1012,7 +1060,7 @@ async fn forward(
     mut lease: Option<Lease>,
 ) -> Response {
     let (mut parts, mut body) = request.into_parts();
-    if let Some(config) = &gateway.config.native_text {
+    if gateway.config.native_text.is_some() || gateway.config.glm.is_some() {
         if matches!(
             parts.uri.path(),
             "/api/chat"
@@ -1041,24 +1089,30 @@ async fn forward(
                 _ => return error(StatusCode::BAD_REQUEST, "native_request_body_unavailable"),
             };
             if let Ok(mut value) = serde_json::from_slice::<serde_json::Value>(&bytes) {
-                if ["model", "name", "source", "destination"]
+                let named = ["model", "name", "source", "destination"]
                     .iter()
-                    .any(|key| {
-                        value.get(key).and_then(serde_json::Value::as_str)
-                            == Some(config.model.as_str())
-                    })
-                {
+                    .find_map(|key| {
+                        value
+                            .get(key)
+                            .and_then(serde_json::Value::as_str)
+                            .and_then(|name| gateway.native_named(name))
+                    });
+                if let Some(native) = named {
                     if parts.uri.path() == "/api/show" {
-                        return Json(config.show()).into_response();
+                        let show = match native {
+                            Native::Qwen => gateway.config.native_text.as_ref().map(|c| c.show()),
+                            Native::Glm => gateway.config.glm.as_ref().map(|c| c.show()),
+                        };
+                        return Json(show.unwrap_or_default()).into_response();
                     }
-                    return native_inference(gateway, value, parts.uri.path(), lease).await;
+                    return native_inference(gateway, value, parts.uri.path(), lease, native).await;
                 }
                 crate::native_text::scrub_json(&mut value);
             }
             body = Body::from(bytes);
         }
         if class != RequestClass::Metadata
-            && let Err(code) = gateway.native_runtime.evict().await
+            && let Err(code) = gateway.evict_native_text().await
         {
             return error(StatusCode::SERVICE_UNAVAILABLE, code);
         }
@@ -1499,7 +1553,6 @@ async fn native_catalog(gateway: Arc<Gateway>, request: Request) -> Response {
         Ok(v) => v,
         Err(_) => return error(StatusCode::BAD_GATEWAY, "native_catalog_invalid"),
     };
-    let config = gateway.config.native_text.as_ref().unwrap();
     let key = if path == "/api/tags" {
         "models"
     } else {
@@ -1508,11 +1561,17 @@ async fn native_catalog(gateway: Arc<Gateway>, request: Request) -> Response {
     let Some(models) = value.get_mut(key).and_then(serde_json::Value::as_array_mut) else {
         return error(StatusCode::BAD_GATEWAY, "native_catalog_invalid");
     };
-    if !models
-        .iter()
-        .any(|m| m["name"] == config.model || m["id"] == config.model)
-    {
-        models.push(if key=="models" {config.metadata()} else {serde_json::json!({"id":config.model,"object":"model","owned_by":"kuno","created":1792368000})});
+    for (name, metadata) in gateway.native_catalog_entries() {
+        if !models
+            .iter()
+            .any(|m| m["name"] == name.as_str() || m["id"] == name.as_str())
+        {
+            models.push(if key == "models" {
+                metadata
+            } else {
+                serde_json::json!({"id":name,"object":"model","owned_by":"kuno","created":1792368000})
+            });
+        }
     }
     Json(value).into_response()
 }
@@ -1522,18 +1581,46 @@ async fn native_inference(
     value: serde_json::Value,
     path: &str,
     mut lease: Option<Lease>,
+    native: Native,
 ) -> Response {
     let mut value = value;
-    let prepared = crate::native_text::prepare(path, &value);
+    let format = match native {
+        Native::Qwen => crate::native_chat::Format::Qwen,
+        Native::Glm => crate::native_chat::Format::Glm,
+    };
+    let prepared = crate::native_text::prepare_for(path, &value, format);
     crate::native_text::scrub_json(&mut value);
     drop(value);
     let prepared = match prepared {
         Ok(p) => p,
         Err(code) => return error(StatusCode::BAD_REQUEST, code),
     };
-    let config = gateway.config.native_text.clone().unwrap();
+    let (model, launch) = match native {
+        Native::Qwen => match &gateway.config.native_text {
+            Some(c) => (c.model.clone(), c.launch()),
+            None => return error(StatusCode::SERVICE_UNAVAILABLE, "native_text_unavailable"),
+        },
+        Native::Glm => match gateway
+            .config
+            .glm
+            .as_ref()
+            .map(|c| (c.model.clone(), c.launch()))
+        {
+            Some((m, Ok(l))) => (m, l),
+            Some((_, Err(code))) => return error(StatusCode::SERVICE_UNAVAILABLE, code),
+            None => return error(StatusCode::SERVICE_UNAVAILABLE, "native_text_unavailable"),
+        },
+    };
     let chat = prepared.chat;
     let stream = prepared.stream;
+    // The other native model off the GPU first.
+    let other = match native {
+        Native::Qwen => Native::Glm,
+        Native::Glm => Native::Qwen,
+    };
+    if let Err(code) = gateway.native(other).evict().await {
+        return error(StatusCode::SERVICE_UNAVAILABLE, code);
+    }
     if let Err(code) = gateway.evict_images().await {
         return error(StatusCode::SERVICE_UNAVAILABLE, code);
     }
@@ -1548,7 +1635,7 @@ async fn native_inference(
         return error(StatusCode::SERVICE_UNAVAILABLE, code);
     }
     let Some(request) = prepared.request else {
-        let result = gateway.native_runtime.evict().await;
+        let result = gateway.native(native).evict().await;
         // evict only returns after wait/reap; a live process retains uncertainty.
         if result != Err("native_worker_reap_failed")
             && let Some(lease) = &mut lease
@@ -1557,7 +1644,7 @@ async fn native_inference(
         }
         return match result {
             Ok(()) => {
-                let mut v = crate::native_text::chunk(&config.model, chat, "", None);
+                let mut v = crate::native_text::chunk(&model, chat, "", None);
                 v["done"] = true.into();
                 v["done_reason"] = "unload".into();
                 Json(v).into_response()
@@ -1569,17 +1656,25 @@ async fn native_inference(
     let mut output = prepared.output;
     let (sender, mut receiver) = tokio::sync::mpsc::channel(2);
     let task_gateway = gateway.clone();
-    let model = config.model.clone();
     tokio::spawn(async move {
         let settled = task_gateway
-            .native_runtime
-            .run(&config, request, sender)
+            .native(native)
+            .run(&launch, request, sender)
             .await;
         let closed = if !prepared.keep_alive {
-            task_gateway.native_runtime.evict().await
+            task_gateway.native(native).evict().await
         } else {
             Ok(())
         };
+        // GLM holds most of the host's RAM: stopped after a few idle minutes.
+        if native == Native::Glm && prepared.keep_alive {
+            let seen = task_gateway.glm_runtime.uses();
+            let idle = task_gateway.clone();
+            tokio::spawn(async move {
+                tokio::time::sleep(crate::glm::IDLE).await;
+                let _ = idle.glm_runtime.evict_if_idle(seen).await;
+            });
+        }
         if settled
             && closed != Err("native_worker_reap_failed")
             && let Some(lease) = &mut lease

@@ -1,5 +1,6 @@
-//! Text-only rendering/parsing of the actual DASLab Qwen4exp embedded template.
-//! Tool execution belongs to the caller. All generated/request buffers are transient.
+//! Text-only rendering/parsing of the actual DASLab Qwen4exp embedded template, and of GLM
+//! 5's (`render_glm`, `Format::Glm`). Tool execution belongs to the caller. All
+//! generated/request buffers are transient.
 use serde_json::{Value, json};
 use zeroize::{Zeroize, Zeroizing};
 type Result<T> = std::result::Result<T, &'static str>;
@@ -8,6 +9,12 @@ const OUTPUT_LIMIT: usize = 8 * 1024 * 1024;
 const TOOL_GUIDE: &str = "# Tools\n\nYou have access to the following functions:\n\n<tools>";
 // Exact text in tokenizer.chat_template of the enrolled, original model shards.
 const TOOL_SUFFIX: &str = "\n</tools>\n\nIf you choose to call a function ONLY reply in the following format with NO suffix:\n\n<tool_call>\n<function=example_function_name>\n<parameter=example_parameter_1>\nvalue_1\n</parameter>\n<parameter=example_parameter_2>\nThis is the value for the second parameter\nthat can span\nmultiple lines\n</parameter>\n</function>\n</tool_call>\n\n<IMPORTANT>\nReminder:\n- Function calls MUST follow the specified format: an inner <function=...></function> block must be nested within <tool_call></tool_call> XML tags\n- Required parameters MUST be specified\n- You may provide optional reasoning for your function call in natural language BEFORE the function call, but NOT after\n- If there is no function call available, answer the question like normal with your current knowledge and do not tell the user about function calls\n</IMPORTANT>";
+/// The model's chat format: its template and its tool-call markup.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Format {
+    Qwen,
+    Glm,
+}
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Thinking {
     Off,
@@ -295,6 +302,7 @@ impl Delta {
     }
 }
 pub struct Output {
+    format: Format,
     pending: Zeroizing<String>,
     thinking: bool,
     tool_block: bool,
@@ -311,8 +319,13 @@ impl Drop for Output {
     }
 }
 impl Output {
+    #[cfg(test)]
     pub fn new(thinking: bool, tools: Vec<Value>, literal: bool) -> Self {
+        Self::with_format(Format::Qwen, thinking, tools, literal)
+    }
+    pub fn with_format(format: Format, thinking: bool, tools: Vec<Value>, literal: bool) -> Self {
         Self {
+            format,
             pending: Zeroizing::new(String::with_capacity(OUTPUT_LIMIT)),
             thinking,
             tool_block: false,
@@ -351,7 +364,10 @@ impl Output {
                 if d.calls.len() >= 128 {
                     return Err("native_tool_call_invalid");
                 }
-                let mut call = parse_call(&self.pending[..at], &self.tools)?;
+                let mut call = match self.format {
+                    Format::Qwen => parse_call(&self.pending[..at], &self.tools)?,
+                    Format::Glm => parse_glm_call(&self.pending[..at], &self.tools)?,
+                };
                 call["function"]["index"] = self.call_index.into();
                 self.call_index += 1;
                 if self.call_index > 128 {
@@ -461,6 +477,241 @@ fn parse_call(block: &str, tools: &[Value]) -> Result<Value> {
         return Err("native_tool_call_invalid");
     }
     Ok(json!({"function":{"name":function,"arguments":args}}))
+}
+
+/// A GLM call: `name<arg_key>k</arg_key><arg_value>v</arg_value>...` (string values as they
+/// are, others as JSON when they parse).
+fn parse_glm_call(block: &str, tools: &[Value]) -> Result<Value> {
+    let block = block.trim();
+    let (function, mut s) = match block.find("<arg_key>") {
+        Some(at) => (block[..at].trim(), &block[at..]),
+        None => (block, ""),
+    };
+    if !name(function) {
+        return Err("native_tool_call_invalid");
+    }
+    let definition = tools
+        .iter()
+        .filter_map(|t| tool_function(t).ok())
+        .find(|f| f["name"] == function)
+        .ok_or("native_tool_call_unknown")?;
+    let mut args = serde_json::Map::new();
+    s = s.trim();
+    while let Some(rest) = s.strip_prefix("<arg_key>") {
+        let (key, rest) = rest
+            .split_once("</arg_key>")
+            .ok_or("native_tool_call_invalid")?;
+        let key = key.trim();
+        let rest = rest
+            .trim_start()
+            .strip_prefix("<arg_value>")
+            .ok_or("native_tool_call_invalid")?;
+        let (value, rest) = rest
+            .split_once("</arg_value>")
+            .ok_or("native_tool_call_invalid")?;
+        if !name(key) || args.contains_key(key) {
+            return Err("native_tool_call_invalid");
+        }
+        let schema = &definition["parameters"]["properties"][key];
+        let parsed = if schema["type"] == "string" {
+            Value::String(value.to_owned())
+        } else {
+            serde_json::from_str(value).unwrap_or_else(|_| Value::String(value.to_owned()))
+        };
+        args.insert(key.to_owned(), parsed);
+        s = rest.trim();
+    }
+    if !s.is_empty() {
+        return Err("native_tool_call_invalid");
+    }
+    Ok(json!({"function":{"name":function,"arguments":args}}))
+}
+
+/// JSON as Python's `json.dumps` writes it (the template's `tojson`): `, ` and `: `
+/// separators, non-ASCII as it is; `first` (if present) before the other keys.
+fn py_json(out: &mut String, v: &Value, first: Option<&str>) -> Result<()> {
+    match v {
+        Value::Object(map) => {
+            push(out, "{")?;
+            let mut keys: Vec<&String> = map.keys().collect();
+            if let Some(f) = first
+                && let Some(i) = keys.iter().position(|k| k.as_str() == f)
+            {
+                let k = keys.remove(i);
+                keys.insert(0, k);
+            }
+            for (i, k) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    push(out, ", ")?;
+                }
+                let key =
+                    Zeroizing::new(serde_json::to_string(k).map_err(|_| "native_tool_invalid")?);
+                push(out, &key)?;
+                push(out, ": ")?;
+                py_json(out, &map[k], None)?;
+            }
+            push(out, "}")
+        }
+        Value::Array(items) => {
+            push(out, "[")?;
+            for (i, x) in items.iter().enumerate() {
+                if i > 0 {
+                    push(out, ", ")?;
+                }
+                py_json(out, x, None)?;
+            }
+            push(out, "]")
+        }
+        other => {
+            let s =
+                Zeroizing::new(serde_json::to_string(other).map_err(|_| "native_tool_invalid")?);
+            push(out, &s)
+        }
+    }
+}
+
+const GLM_TOOL_GUIDE: &str = "<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n";
+const GLM_TOOL_SUFFIX: &str = "</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call>";
+
+/// GLM 5's embedded template (transformers' rendering): `[gMASK]<sop>`, the reasoning
+/// effort, the tools, then each message (`<|system|>`, `<|user|>`, `<|assistant|>` with its
+/// reasoning in `<think>`, a run of tool results after one `<|observation|>`), and
+/// `<|assistant|><think>` (closed at once when thinking is off).
+pub fn render_glm(
+    messages: &[Value],
+    tools: &[Value],
+    thinking: Thinking,
+) -> Result<Zeroizing<Vec<u8>>> {
+    let mut out = Zeroizing::new(String::with_capacity(LIMIT));
+    push(&mut out, "[gMASK]<sop><|system|>Reasoning Effort: ")?;
+    push(
+        &mut out,
+        match thinking {
+            Thinking::Low => "Low",
+            Thinking::Medium => "High",
+            Thinking::High | Thinking::Off => "Max",
+        },
+    )?;
+    if !tools.is_empty() {
+        push(&mut out, GLM_TOOL_GUIDE)?;
+        for t in tools {
+            py_json(&mut out, tool_function(t)?, Some("name"))?;
+            push(&mut out, "\n")?;
+        }
+        push(&mut out, GLM_TOOL_SUFFIX)?;
+    }
+    for (i, m) in messages.iter().enumerate() {
+        let object = m.as_object().ok_or("native_messages_invalid")?;
+        if object.keys().any(|k| {
+            ![
+                "role",
+                "content",
+                "thinking",
+                "reasoning_content",
+                "tool_calls",
+                "tool_name",
+                "tool_call_id",
+                "images",
+            ]
+            .contains(&k.as_str())
+        }) {
+            return Err("native_message_feature_unsupported");
+        }
+        if m.get("images")
+            .is_some_and(|v| !v.is_null() && !v.as_array().is_some_and(Vec::is_empty))
+        {
+            return Err("native_images_unsupported");
+        }
+        let role = m
+            .get("role")
+            .and_then(Value::as_str)
+            .ok_or("native_messages_invalid")?;
+        if role != "assistant"
+            && ["thinking", "reasoning_content", "tool_calls"]
+                .iter()
+                .any(|k| m.get(k).is_some_and(|v| !v.is_null()))
+        {
+            return Err("native_message_feature_unsupported");
+        }
+        let content = match m.get("content") {
+            None | Some(Value::Null) => "",
+            Some(Value::String(s)) => s.as_str(),
+            _ => return Err("native_messages_invalid"),
+        };
+        match role {
+            "system" | "developer" => {
+                push(&mut out, "<|system|>")?;
+                push(&mut out, content)?;
+            }
+            "user" => {
+                push(&mut out, "<|user|>")?;
+                push(&mut out, content)?;
+            }
+            "assistant" => {
+                push(&mut out, "<|assistant|>")?;
+                let reasoning = m
+                    .get("thinking")
+                    .or_else(|| m.get("reasoning_content"))
+                    .filter(|r| !r.is_null());
+                let (reasoning, content) = match reasoning {
+                    Some(r) => (Some(r.as_str().ok_or("native_messages_invalid")?), content),
+                    None => match content.split_once("</think>") {
+                        Some((before, after)) => (
+                            Some(before.rsplit("<think>").next().unwrap_or(before)),
+                            after.rsplit("</think>").next().unwrap_or(after),
+                        ),
+                        None => (None, content),
+                    },
+                };
+                push(&mut out, "<think>")?;
+                push(&mut out, reasoning.unwrap_or(""))?;
+                push(&mut out, "</think>")?;
+                push(&mut out, content.trim())?;
+                if let Some(calls) = m.get("tool_calls").filter(|v| !v.is_null()) {
+                    let calls = calls.as_array().ok_or("native_tool_invalid")?;
+                    if calls.len() > 128 {
+                        return Err("native_tool_invalid");
+                    }
+                    for c in calls {
+                        let f = tool_function(c)?;
+                        push(&mut out, "<tool_call>")?;
+                        push(&mut out, f["name"].as_str().unwrap_or(""))?;
+                        if let Some(args) = f.get("arguments").filter(|v| !v.is_null()) {
+                            let args = args.as_object().ok_or("native_tool_arguments_invalid")?;
+                            for (key, v) in args {
+                                if !name(key) {
+                                    return Err("native_tool_arguments_invalid");
+                                }
+                                push(&mut out, "<arg_key>")?;
+                                push(&mut out, key)?;
+                                push(&mut out, "</arg_key><arg_value>")?;
+                                match v.as_str() {
+                                    Some(s) => push(&mut out, s)?,
+                                    None => py_json(&mut out, v, None)?,
+                                }
+                                push(&mut out, "</arg_value>")?;
+                            }
+                        }
+                        push(&mut out, "</tool_call>")?;
+                    }
+                }
+            }
+            "tool" => {
+                if i == 0 || messages[i - 1]["role"] != "tool" {
+                    push(&mut out, "<|observation|>")?;
+                }
+                push(&mut out, "<tool_response>")?;
+                push(&mut out, content)?;
+                push(&mut out, "</tool_response>")?;
+            }
+            _ => return Err("native_message_role_unsupported"),
+        }
+    }
+    push(&mut out, "<|assistant|><think>")?;
+    if !thinking.enabled() {
+        push(&mut out, "</think>")?;
+    }
+    Ok(Zeroizing::new(out.as_bytes().to_vec()))
 }
 
 impl Delta {
@@ -592,5 +843,75 @@ mod tests {
         let mut whole = json!({"message":{"role":"assistant","content":""}});
         collected.annotate(&mut whole, true);
         assert_eq!(whole, stream);
+    }
+    /// The expected texts are the model's embedded template rendered by jinja2 as
+    /// transformers renders it (trim_blocks, lstrip_blocks). Tool definitions' keys are in
+    /// sorted order (serde_json's), `name` first.
+    #[test]
+    fn glm_rendering_matches_the_embedded_template() {
+        let cases: [(&str, Value, Value, Thinking); 6] = [
+            (
+                "[gMASK]<sop><|system|>Reasoning Effort: Max<|system|>Be brief.<|user|>Hi 🦦<|assistant|><think>",
+                serde_json::from_str("[{\"role\": \"system\", \"content\": \"Be brief.\"}, {\"role\": \"user\", \"content\": \"Hi 🦦\"}]").unwrap(),
+                serde_json::from_str("[]").unwrap(),
+                Thinking::High,
+            ),
+            (
+                "[gMASK]<sop><|system|>Reasoning Effort: Max<|user|>One?<|assistant|><think>count</think>Two.<|user|>  Three?  <|assistant|><think>",
+                serde_json::from_str("[{\"role\": \"user\", \"content\": \"One?\"}, {\"role\": \"assistant\", \"content\": \"Two.\", \"thinking\": \"count\"}, {\"role\": \"user\", \"content\": \"  Three?  \"}]").unwrap(),
+                serde_json::from_str("[]").unwrap(),
+                Thinking::High,
+            ),
+            (
+                "[gMASK]<sop><|system|>Reasoning Effort: Max<|user|>One?<|assistant|><think></think>Two.<|user|>Next<|assistant|><think>",
+                serde_json::from_str("[{\"role\": \"user\", \"content\": \"One?\"}, {\"role\": \"assistant\", \"content\": \"\\n Two. \\n\"}, {\"role\": \"user\", \"content\": \"Next\"}]").unwrap(),
+                serde_json::from_str("[]").unwrap(),
+                Thinking::High,
+            ),
+            (
+                "[gMASK]<sop><|system|>Reasoning Effort: Low<|user|>Q<|assistant|><think>",
+                serde_json::from_str("[{\"role\": \"user\", \"content\": \"Q\"}]").unwrap(),
+                serde_json::from_str("[]").unwrap(),
+                Thinking::Low,
+            ),
+            (
+                "[gMASK]<sop><|system|>Reasoning Effort: Max<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"name\": \"weather\", \"description\": \"Get weather\", \"parameters\": {\"properties\": {\"city\": {\"type\": \"string\"}, \"days\": {\"type\": \"integer\"}}, \"type\": \"object\"}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|user|>Weather?<|assistant|><think>Need weather</think><tool_call>weather<arg_key>city</arg_key><arg_value>Boston</arg_value><arg_key>days</arg_key><arg_value>3</arg_value></tool_call><|observation|><tool_response>sunny</tool_response><tool_response>warm</tool_response><|assistant|><think>",
+                serde_json::from_str("[{\"role\": \"user\", \"content\": \"Weather?\"}, {\"role\": \"assistant\", \"content\": \"\", \"tool_calls\": [{\"function\": {\"name\": \"weather\", \"arguments\": {\"city\": \"Boston\", \"days\": 3}}}], \"thinking\": \"Need weather\"}, {\"role\": \"tool\", \"content\": \"sunny\"}, {\"role\": \"tool\", \"content\": \"warm\"}]").unwrap(),
+                serde_json::from_str("[{\"type\": \"function\", \"function\": {\"name\": \"weather\", \"description\": \"Get weather\", \"parameters\": {\"properties\": {\"city\": {\"type\": \"string\"}, \"days\": {\"type\": \"integer\"}}, \"type\": \"object\"}}}]").unwrap(),
+                Thinking::High,
+            ),
+            (
+                "[gMASK]<sop><|system|>Reasoning Effort: Max<|system|>\n# Tools\n\nYou may call one or more functions to assist with the user query.\n\nYou are provided with function signatures within <tools></tools> XML tags:\n<tools>\n{\"name\": \"weather\", \"parameters\": {\"type\": \"object\"}}\n</tools>\n\nFor each function call, output the function name and arguments within the following XML format:\n<tool_call>{function-name}<arg_key>{arg-key-1}</arg_key><arg_value>{arg-value-1}</arg_value><arg_key>{arg-key-2}</arg_key><arg_value>{arg-value-2}</arg_value>...</tool_call><|user|>Both?<|assistant|><think></think>Checking.<tool_call>weather<arg_key>city</arg_key><arg_value>A</arg_value></tool_call><tool_call>weather<arg_key>city</arg_key><arg_value>B</arg_value></tool_call><|observation|><tool_response>x</tool_response><|user|>ok<|assistant|><think>",
+                serde_json::from_str("[{\"role\": \"user\", \"content\": \"Both?\"}, {\"role\": \"assistant\", \"content\": \"Checking.\", \"tool_calls\": [{\"function\": {\"name\": \"weather\", \"arguments\": {\"city\": \"A\"}}}, {\"function\": {\"name\": \"weather\", \"arguments\": {\"city\": \"B\"}}}]}, {\"role\": \"tool\", \"content\": \"x\"}, {\"role\": \"user\", \"content\": \"ok\"}]").unwrap(),
+                serde_json::from_str("[{\"type\": \"function\", \"function\": {\"name\": \"weather\", \"parameters\": {\"type\": \"object\"}}}]").unwrap(),
+                Thinking::High,
+            ),
+        ];
+        for (want, messages, tools, thinking) in cases {
+            let tools = tools.as_array().unwrap().clone();
+            let got = render_glm(messages.as_array().unwrap(), &tools, thinking).unwrap();
+            assert_eq!(std::str::from_utf8(&got).unwrap(), want);
+        }
+        // Thinking off closes the block at once.
+        let off = render_glm(&[json!({"role":"user","content":"Q"})], &[], Thinking::Off).unwrap();
+        assert!(off.ends_with(b"<|assistant|><think></think>"));
+    }
+    #[test]
+    fn glm_calls_parse_into_ollama_shape() {
+        let mut p = Output::with_format(Format::Glm, true, ts(), false);
+        let d = p
+            .feed(
+                "Need it.</think><tool_call>weather<arg_key>city</arg_key><arg_value>Boston</arg_value><arg_key>days</arg_key><arg_value>3</arg_value></tool_call>",
+                true,
+            )
+            .unwrap();
+        assert_eq!(*d.thinking, "Need it.");
+        assert_eq!(d.calls[0]["function"]["name"], "weather");
+        assert_eq!(
+            d.calls[0]["function"]["arguments"],
+            json!({"city":"Boston","days":3})
+        );
+        let mut p = Output::with_format(Format::Glm, false, ts(), false);
+        assert!(p.feed("<tool_call>nope</tool_call>", true).is_err());
     }
 }

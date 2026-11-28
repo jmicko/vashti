@@ -29,6 +29,9 @@ pub struct Config {
     /// is used.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub audio: Option<AudioConfig>,
+    /// GLM 5.3 Flash on Kuno's own engine (a native text model; needs the managed pool).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glm: Option<crate::glm::Config>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -68,6 +71,7 @@ impl Default for Config {
             image: None,
             native_text: None,
             audio: None,
+            glm: None,
         }
     }
 }
@@ -117,6 +121,19 @@ impl Config {
             native.validate()?;
             if self.managed.is_none() {
                 return Err("native_text_requires_managed_pool");
+            }
+        }
+        if let Some(glm) = &self.glm {
+            glm.validate()?;
+            if self.managed.is_none() {
+                return Err("glm_requires_managed_pool");
+            }
+            if self
+                .native_text
+                .as_ref()
+                .is_some_and(|n| n.model == glm.model)
+            {
+                return Err("glm_configuration_invalid");
             }
         }
         if let Some(image) = &self.image {

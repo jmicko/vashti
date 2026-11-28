@@ -1,5 +1,29 @@
 # Kuno and Vashti Coordination
 
+**Kuno GLM 5.3 Flash (2026-11-28). Installed only if this note says so; Vashti handoff.**
+Contract: [Kuno GLM](kuno-glm.md). A second native text model,
+`kuno-glm-5.3-flash:iq3_xxs`, appears in `/api/tags` and `/v1/models` (`kuno_backend:
+"rust-vulkan"`, family `glm5next`) beside the existing native one, and answers `/api/chat`
+and `/api/generate` with the same fields as that model: `think` (absent/false: none;
+true/"low"/"medium"/"high"), reasoning in `message.thinking`, Ollama `tools`/`tool_calls`,
+streaming NDJSON. Tested through a development gateway (chat, streaming with thinking, a
+tool call and its result, a reused second turn, generate, `/api/ps`, unload, idle stop),
+not the installed service.
+
+Vashti notes (no UI change is required; any user-facing change is proposed to the user
+first):
+
+- It holds the B70 and ~90 GB of RAM: image or video requests and other models unload it
+  (and it unloads them). The first request after a load takes about a minute
+  (`load_duration`); a later one starts at once. It stops after five idle minutes.
+- Generation is about 13-15 tokens/s. A chat's next turn reuses the previous prompt when
+  the earlier messages are sent back unchanged (including the assistant's `thinking`, if
+  Vashti keeps it); otherwise the whole history is read again (about 100+ tokens/s).
+- Images are refused (`native_images_unsupported`); `format` is refused
+  (`native_request_feature_unsupported`), as for the other native model, so structured
+  output uses prompt-only JSON (`kuno_backend` metadata).
+- The same seed can give slightly different text (expert placement adapts).
+
 **Kuno speech recognition and synthesis (2026-11-26). NOT installed; Vashti handoff.**
 Branch `claude/lfm3-audio` (on top of the beta.5 `main`, `f9273a38`). Contract:
 [Kuno audio](kuno-audio.md). `POST /kuno/v1/audio/transcriptions` (`{audio: base64 WAV,

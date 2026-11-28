@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use std::{
     path::PathBuf,
     process::Stdio,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
     time::{Duration, Instant},
 };
 use tokio::{
@@ -45,11 +45,23 @@ impl Config {
             "digest":"4c1eb2ceb4915e1192f4f386021897bde56a97f40a0bb78bb86465e0f7d2aca3","modified_at":"2026-10-19T00:00:00Z",
             "details":{"format":"gguf","family":"qwen4exp","families":["qwen4exp"],"quantization_level":"IQ3_S"},"kuno_backend":"rust-intel"})
     }
+    pub fn launch(&self) -> Launch {
+        Launch {
+            executable: self.executable.clone(),
+            args: vec!["--native-worker".into(), self.settings.clone().into()],
+        }
+    }
     pub fn show(&self) -> Value {
         json!({"license":"See model artifact license","parameters":"temperature 0.7\ntop_p 0.8\ntop_k 20\nnum_ctx 32768\nnum_predict 1024",
             "template":"{{ .Prompt }}", "capabilities":["completion","thinking","tools"],
             "details":self.metadata()["details"],"model_info":{"general.architecture":"qwen4exp","qwen4exp.context_length":32768},"kuno_backend":"rust-intel"})
     }
+}
+/// How a worker starts: its executable and arguments (never content).
+#[derive(Clone, Debug)]
+pub struct Launch {
+    pub executable: PathBuf,
+    pub args: Vec<std::ffi::OsString>,
 }
 pub struct Prepared {
     pub request: Option<wire::Generate>,
@@ -95,6 +107,19 @@ fn append(out: &mut Vec<u8>, text: &str) -> Result<()> {
 /// Validate before dispatch. No silently ignored tools, images or output format.
 /// This preview implements non-thinking text chat and rendered/raw generation.
 pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
+    prepare_for(path, value, crate::native_chat::Format::Qwen)
+}
+/// As `prepare`, for a model's chat format (its template and recommended sampling).
+pub fn prepare_for(
+    path: &str,
+    value: &Value,
+    format: crate::native_chat::Format,
+) -> Result<Prepared> {
+    use crate::native_chat::Format;
+    let render = |messages: &[Value], tools: &[Value], thinking| match format {
+        Format::Qwen => crate::native_chat::render(messages, tools, thinking),
+        Format::Glm => crate::native_chat::render_glm(messages, tools, thinking),
+    };
     let object = value.as_object().ok_or("native_request_invalid")?;
     let chat = match path {
         "/api/chat" => true,
@@ -154,7 +179,8 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
     if raw && thinking.enabled() {
         return Err("native_raw_thinking_unsupported");
     }
-    let output = crate::native_chat::Output::new(
+    let output = crate::native_chat::Output::with_format(
+        format,
         thinking.enabled() && !raw,
         crate::native_chat::tools(value.get("tools"))?,
         raw,
@@ -213,13 +239,14 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
     // Unset sampling options follow Ollama: the model's recommended sampling
     // (Qwen: thinking 0.6/0.95, non-thinking 0.7/0.8, top_k 20) and a fresh
     // random seed per request. Explicit temperature 0 still selects greedy.
-    let (default_temperature, default_top_p) = if thinking.enabled() {
-        (0.6, 0.95)
-    } else {
-        (0.7, 0.8)
+    // (GLM 5: temperature 1.0, top_p 0.95; top_k Ollama's 40.)
+    let (default_temperature, default_top_p, default_top_k) = match format {
+        Format::Glm => (1.0, 0.95, 40),
+        Format::Qwen if thinking.enabled() => (0.6, 0.95, 20),
+        Format::Qwen => (0.7, 0.8, 20),
     };
     let top_k = match get("top_k") {
-        None => 20,
+        None => default_top_k,
         Some(v) => i32::try_from(v.as_i64().ok_or("native_options_invalid")?)
             .map_err(|_| "native_options_invalid")?,
     };
@@ -242,7 +269,7 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
                 output,
             });
         }
-        prompt = crate::native_chat::render(messages, output.definitions(), thinking)?;
+        prompt = render(messages, output.definitions(), thinking)?;
     } else {
         let text_field = |key| -> Result<&str> {
             match value.get(key).filter(|v| !v.is_null()) {
@@ -276,7 +303,7 @@ pub fn prepare(path: &str, value: &Value) -> Result<Prepared> {
                 messages.push(json!({"role":"system","content":system}));
             }
             messages.push(json!({"role":"user","content":input}));
-            let rendered = crate::native_chat::render(&messages, output.definitions(), thinking);
+            let rendered = render(&messages, output.definitions(), thinking);
             messages.iter_mut().for_each(scrub_json);
             prompt = rendered?;
         }
@@ -331,8 +358,34 @@ struct Worker {
 pub struct Runtime {
     worker: Mutex<Option<Worker>>,
     resident: AtomicBool,
+    /// Requests run so far (for idle eviction).
+    uses: AtomicU64,
 }
 impl Runtime {
+    pub fn uses(&self) -> u64 {
+        self.uses.load(Ordering::SeqCst)
+    }
+    /// Stops the worker if no request has come since `seen` (`uses`) and none is running.
+    pub async fn evict_if_idle(&self, seen: u64) -> Result<()> {
+        if self.uses() != seen {
+            return Ok(());
+        }
+        let Ok(mut state) = self.worker.try_lock() else {
+            return Ok(());
+        };
+        if self.uses() != seen || state.is_none() {
+            return Ok(());
+        }
+        let mut worker = state.take().ok_or("native_worker_unavailable")?;
+        worker.input.take();
+        let result = tokio::time::timeout(Duration::from_secs(180), worker.child.wait()).await;
+        if !matches!(result, Ok(Ok(status)) if status.success()) {
+            let _ = worker.child.start_kill();
+            let _ = tokio::time::timeout(Duration::from_secs(30), worker.child.wait()).await;
+        }
+        self.resident.store(false, Ordering::Release);
+        Ok(())
+    }
     pub fn resident(&self) -> bool {
         self.resident.load(Ordering::Acquire)
     }
@@ -358,15 +411,16 @@ impl Runtime {
     /// HTTP consumer is drained; model admission remains held until CLEAN/DONE.
     pub async fn run(
         &self,
-        config: &Config,
+        launch: &Launch,
         request: wire::Generate,
         events: mpsc::Sender<Event>,
     ) -> bool {
         let started = Instant::now();
+        self.uses.fetch_add(1, Ordering::SeqCst);
         let mut state = self.worker.lock().await;
         let result = async {
             if state.is_none() {
-                *state = Some(start(config).await?);
+                *state = Some(start(launch).await?);
             }
             let worker = state.as_mut().ok_or("native_worker_unavailable")?;
             let input = worker.input.as_mut().ok_or("native_worker_unavailable")?;
@@ -444,15 +498,12 @@ impl Runtime {
         }
     }
 }
-async fn start(config: &Config) -> Result<Worker> {
+async fn start(launch: &Launch) -> Result<Worker> {
     crate::image_privacy::require_no_swap().map_err(|_| "native_worker_requires_no_swap")?;
     let parent = std::process::id();
-    let mut command = Command::new(&config.executable);
+    let mut command = Command::new(&launch.executable);
     command
-        .args([
-            std::ffi::OsStr::new("--native-worker"),
-            config.settings.as_os_str(),
-        ])
+        .args(&launch.args)
         .current_dir("/")
         .env_clear()
         .env("PATH", "/usr/bin:/bin")

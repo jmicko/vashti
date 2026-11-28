@@ -385,6 +385,8 @@ impl<'m> Engine<'m> {
         if t == 0 || t > SMALL {
             return Err("model_state_invalid");
         }
+        // (Every block's experts: a short prompt may come first.)
+        self.load_all()?;
         if self.pos + t > self.max_positions {
             return Err("context_full");
         }
@@ -867,6 +869,7 @@ impl<'m> Engine<'m> {
             groups: [1, 1, tu],
             independent: false,
         });
+        this.logits_out(&mut ops, &this.logits_t, t);
         this.mtp_follow(&mut ops, t, pos, Some(t - 1));
         let last = submit(this, &mut ops)?;
         for p in pending.drain(..) {
@@ -889,7 +892,7 @@ impl<'m> Engine<'m> {
 
     /// The KDA blocks' states as after token `index` of the last small batch (its
     /// snapshots), and the NextN block's `last` as the main model's h there.
-    fn restore(&self, index: usize) -> Result<()> {
+    pub(super) fn restore(&self, index: usize) -> Result<()> {
         let hp = &self.model.hp;
         let d = hp.kda_head * hp.heads;
         let state = hp.heads * 128 * 128;
@@ -940,84 +943,141 @@ impl<'m> Engine<'m> {
         drafts: usize,
         emit: &mut dyn FnMut(u32),
     ) -> Result<SpecStats> {
+        self.decode(prompt, count, drafts, None, false, &mut |t| {
+            emit(t);
+            true
+        })
+    }
+
+    /// `tokens` at the next positions, then up to `count` tokens after them: greedy, or
+    /// drawn by `sampler` (each position's token drawn from the main model's logits there;
+    /// a draft is kept when it is the token drawn, so the output is the sequential
+    /// sampler's). `save`: a saved point (`save_point`) after `tokens`. `emit` gets each
+    /// token as it is decided and returns false to stop (that token is not run).
+    pub fn decode(
+        &mut self,
+        tokens: &[u32],
+        count: usize,
+        drafts: usize,
+        mut sampler: Option<&mut super::serve::Sampler>,
+        save: bool,
+        emit: &mut dyn FnMut(u32) -> bool,
+    ) -> Result<SpecStats> {
         let mut stats = SpecStats::default();
         let drafts = if self.mtp.is_some() {
             drafts.min(self.snaps).min(SMALL - 1)
         } else {
             0
         };
-        self.load_mtp()?;
-        let mut next = self.prefill(prompt)?;
-        // KUNO_GLM_PROFILE: the decode's kernels only.
-        if let Ok(mut p) = self.profile.lock() {
-            p.clear();
+        if sampler.as_ref().is_some_and(|s| s.greedy()) {
+            sampler = None;
         }
-        let mut made = 0;
-        while made < count {
-            emit(next);
-            made += 1;
-            if made >= count {
-                break;
+        self.sampling
+            .store(sampler.is_some(), std::sync::atomic::Ordering::Relaxed);
+        let result = (|| {
+            self.load_mtp()?;
+            let mut next = self.prefill(tokens)?;
+            if save {
+                self.save_point()?;
             }
-            // The banks adapt as in `step`: a round of trades (from the verifications'
-            // counts) copies while the drafts run; settled before the next verification.
-            let round = self.trade_round()?;
-            let t0 = std::time::Instant::now();
-            let mut batch = vec![next];
-            if drafts > 0 {
-                // The drafts from the main model's h at the position before `next`.
-                if let Some(mtp) = &self.mtp {
-                    let mut ops: Vec<Op> = Vec::new();
-                    ops.push(Op {
-                        kernel: &self.e.copyoff,
-                        buffers: vec![&mtp.last, &mtp.h],
-                        constants: vec![self.model.hp.embd as u32, 0, 0],
-                        groups: grid(self.model.hp.embd.div_ceil(256)),
-                        independent: false,
-                    });
-                    submit(self, &mut ops)?.wait()?;
+            if let Some(s) = sampler.as_deref_mut() {
+                next = s.choose(&self.host_logits(None)?);
+            }
+            // KUNO_GLM_PROFILE: the decode's kernels only.
+            if let Ok(mut p) = self.profile.lock() {
+                p.clear();
+            }
+            let mut made = 0;
+            while made < count {
+                made += 1;
+                if !emit(next) || made >= count {
+                    break;
                 }
-                let mut x = next;
-                for i in 0..drafts.min(count - made) {
-                    x = self.mtp_draft(x, self.pos + i)?;
-                    batch.push(x);
+                // Room for the step's batch (the token and its drafts).
+                let room = self.max_positions.saturating_sub(self.pos);
+                if room == 0 {
+                    return Err("context_full");
                 }
-            }
-            stats.draft_s += t0.elapsed().as_secs_f64();
-            if let Some((pass, trades)) = round {
-                pass.wait()?;
-                self.settle_round(&trades)?;
-                stats.trades += trades.len();
-            }
-            let t1 = std::time::Instant::now();
-            let start = self.pos;
-            let z = if self.pipelines(batch.len()) {
-                self.run_pipe(&batch, (batch.len() - 1) as u32)?
-            } else {
-                self.run_small(&batch, (batch.len() - 1) as u32)?
-            };
-            stats.verify_s += t1.elapsed().as_secs_f64();
-            let mut accepted = 0;
-            while accepted + 1 < batch.len() && batch[accepted + 1] == z[accepted] {
-                accepted += 1;
-            }
-            stats.steps += 1;
-            stats.drafted += batch.len() - 1;
-            stats.accepted += accepted;
-            // Kept: `next` and the accepted drafts; their choices are the output.
-            for &tok in &z[..accepted] {
-                if made < count {
-                    emit(tok);
-                    made += 1;
+                let drafts = drafts.min(room - 1);
+                // The banks adapt as in `step`: a round of trades (from the verifications'
+                // counts) copies while the drafts run; settled before the next verification.
+                let round = self.trade_round()?;
+                let t0 = std::time::Instant::now();
+                let mut batch = vec![next];
+                if drafts > 0 {
+                    // The drafts from the main model's h at the position before `next`.
+                    if let Some(mtp) = &self.mtp {
+                        let mut ops: Vec<Op> = Vec::new();
+                        ops.push(Op {
+                            kernel: &self.e.copyoff,
+                            buffers: vec![&mtp.last, &mtp.h],
+                            constants: vec![self.model.hp.embd as u32, 0, 0],
+                            groups: grid(self.model.hp.embd.div_ceil(256)),
+                            independent: false,
+                        });
+                        submit(self, &mut ops)?.wait()?;
+                    }
+                    let mut x = next;
+                    for i in 0..drafts.min(count - made) {
+                        x = self.mtp_draft(x, self.pos + i)?;
+                        batch.push(x);
+                    }
                 }
+                stats.draft_s += t0.elapsed().as_secs_f64();
+                if let Some((pass, trades)) = round {
+                    pass.wait()?;
+                    self.settle_round(&trades)?;
+                    stats.trades += trades.len();
+                }
+                let t1 = std::time::Instant::now();
+                let start = self.pos;
+                let greedy = if self.pipelines(batch.len()) {
+                    self.run_pipe(&batch, (batch.len() - 1) as u32)?
+                } else {
+                    self.run_small(&batch, (batch.len() - 1) as u32)?
+                };
+                stats.verify_s += t1.elapsed().as_secs_f64();
+                // The model's token after each of the batch's, as far as the drafts hold.
+                let mut z = Vec::with_capacity(batch.len());
+                for i in 0..batch.len() {
+                    let zi = match sampler.as_deref_mut() {
+                        Some(s) => s.choose(&self.host_logits(Some(i))?),
+                        None => greedy[i],
+                    };
+                    z.push(zi);
+                    if i + 1 >= batch.len() || batch[i + 1] != zi {
+                        break;
+                    }
+                }
+                let accepted = z.len() - 1;
+                stats.steps += 1;
+                stats.drafted += batch.len() - 1;
+                stats.accepted += accepted;
+                if accepted + 1 < batch.len() {
+                    self.restore(accepted)?;
+                    self.pos = start + accepted + 1;
+                }
+                // Kept: `next` and the accepted drafts; their choices are the output.
+                let mut stopped = false;
+                for &tok in &z[..accepted] {
+                    if made < count {
+                        made += 1;
+                        if !emit(tok) {
+                            stopped = true;
+                            break;
+                        }
+                    }
+                }
+                if stopped || made >= count {
+                    break;
+                }
+                next = z[accepted];
             }
-            if accepted + 1 < batch.len() {
-                self.restore(accepted)?;
-                self.pos = start + accepted + 1;
-            }
-            next = z[accepted];
-        }
-        Ok(stats)
+            Ok(())
+        })();
+        self.sampling
+            .store(false, std::sync::atomic::Ordering::Relaxed);
+        result.map(|()| stats)
     }
 }
 
