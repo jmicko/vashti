@@ -70,7 +70,7 @@ impl<'m> Engine<'m> {
             // mlab.comp's shape: latents of 512, heads in sixteens.
             || self.model.hp.kv_lora != 512
             || !self.model.hp.heads.is_multiple_of(16)
-            || self.second.is_some()
+            || self.second.is_some() && self.mtp.is_none()
             || self.trace.is_some() && std::env::var_os("KUNO_GLM_TRACE_BATCH").is_none();
         let mut next = Err("prompt_empty");
         if sequential {
@@ -100,7 +100,55 @@ impl<'m> Engine<'m> {
             }
         }
         self.warm_banks()?;
+        self.fill_tiers()?;
         next
+    }
+
+    /// After the first prompt, with speculation and a second device: per block the host
+    /// experts used most (the banks' scores) copied there for verifications (the host keeps
+    /// its copies).
+    fn fill_tiers(&mut self) -> Result<()> {
+        let Some(sd) = &self.second else {
+            return Ok(());
+        };
+        if self.mtp.is_none() || self.slots2 == 0 || !self.tiers.is_empty() {
+            return Ok(());
+        }
+        let started = std::time::Instant::now();
+        let mut tiers = Vec::with_capacity(self.experts.len());
+        let mut bytes = 0usize;
+        for ex in &self.experts {
+            let Some(ex) = ex.get() else {
+                tiers.push(None);
+                continue;
+            };
+            let mut ranked: Vec<(usize, f32)> = {
+                let uses = ex.uses.lock().map_err(|_| "model_state_invalid")?;
+                (0..uses.len())
+                    .filter(|e| ex.host_slot[*e].is_some())
+                    .map(|e| (e, uses[e].0))
+                    .collect()
+            };
+            ranked.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
+            let ids: Vec<usize> = ranked.iter().take(self.slots2).map(|x| x.0).collect();
+            let words: usize = ex.stride.iter().sum();
+            bytes += ids.len() * words * 4;
+            tiers.push(Some(sd.tier(&ids, |e| {
+                let (chunk, at) = ex.host_at(ex.host_slot[e].unwrap_or(0));
+                // SAFETY: between tokens no pass writes the host chunks (trades settled).
+                unsafe { &chunk.bytes()[at * 4..(at + words) * 4] }
+            })?));
+        }
+        self.tiers = tiers;
+        if std::env::var_os("KUNO_GLM_TIMING").is_some() {
+            eprintln!(
+                "second device: {} experts per block ({:.1} GB) in {:.1} s",
+                self.slots2,
+                bytes as f64 / 1e9,
+                started.elapsed().as_secs_f64()
+            );
+        }
+        Ok(())
     }
 
     /// After a prompt: up to KUNO_GLM_WARM (default 16) rounds of trades, one per block per
@@ -345,7 +393,7 @@ impl<'m> Engine<'m> {
         std::thread::scope(|sc| -> Result<()> {
             type Fetched = Result<(Vec<Vec<u8>>, Vec<Mapped>)>;
             let mut prefetch: Option<(usize, std::thread::ScopedJoinHandle<'_, Fetched>)> = None;
-            let host = hp.experts - this.slots1.min(hp.experts);
+            let host = this.host_records();
             let gpu = &this.gpu;
             for (il, blk) in this.blocks.iter().enumerate() {
                 let c = bmix(this, &hp, &mut ops, t, cur, &blk.attn, next);
@@ -1041,7 +1089,17 @@ pub(super) fn mm<'a>(
             2 => &this.e.b.mvr2,
             _ => &this.e.b.mvr,
         };
-        let groups = (m.rows as u32).div_ceil(per * rows);
+        // KUNO_GLM_WIDE=1: few rows (the routers) a workgroup per row, as `step` runs them
+        // (~1 ms less per verification, but other sums: near ties among the experts can
+        // flip, so the text, and with it the drafts' acceptance, changes).
+        let wide = per == 1 && m.wide && std::env::var("KUNO_GLM_WIDE").is_ok_and(|v| v == "1");
+        let mut constants = constants;
+        let groups = if wide {
+            constants[6] |= 4;
+            m.rows as u32
+        } else {
+            (m.rows as u32).div_ceil(per * rows)
+        };
         ops.push(Op {
             kernel,
             buffers: vec![&m.w, &m.s, x, y],
@@ -1199,41 +1257,48 @@ mod tests {
                 let xb = filled(&gpu, bytes_of(&x)).unwrap();
                 let y = gpu.buffer((tokens * m.rows * 4) as u64).unwrap();
                 let (r, c, t) = (m.rows as u32, m.cols as u32, tokens as u32);
-                let groups = r.div_ceil(8);
                 let b = [&g.w, &g.s, &xb, &y];
-                let mut steps = Vec::new();
-                let consts: Vec<Vec<u32>> = (0..t)
-                    .map(|j| vec![r, c, g.kind, j * c, j * r, 0, 0, 0, 0])
-                    .collect();
-                for cs in &consts {
-                    steps.push(Step {
-                        kernel: &mv,
-                        buffers: &b,
-                        constants: cs,
-                        groups: [groups.min(65535), groups.div_ceil(65535), 1],
-                    });
-                }
-                gpu.pass(&steps).unwrap();
                 let stage = gpu.readback((tokens * m.rows * 4) as u64).unwrap();
-                let mut want = vec![0f32; tokens * m.rows];
-                gpu.read_floats(&y, 0, &stage, &mut want).unwrap();
-                let ct = vec![r, c, g.kind, 0, 0, 0, 0, 0, 0, c, r, t];
-                gpu.pass(&[Step {
-                    kernel: &mvt,
-                    buffers: &b,
-                    constants: &ct,
-                    groups: [groups.min(65535), groups.div_ceil(65535), 1],
-                }])
-                .unwrap();
                 let mut got = vec![0f32; tokens * m.rows];
-                gpu.read_floats(&y, 0, &stage, &mut got).unwrap();
-                let differ = got
-                    .iter()
-                    .zip(&want)
-                    .filter(|(a, b)| a.to_bits() != b.to_bits())
-                    .count();
-                eprintln!("{name} x{tokens}: {differ} of {} sums differ", got.len());
-                assert_eq!(differ, 0, "{name} x{tokens}");
+                let mut want = vec![0f32; tokens * m.rows];
+                // Narrow (a subgroup per row) and wide (a workgroup per row: the routers).
+                for wide in [false, true] {
+                    let (groups, fl) = if wide { (r, 4) } else { (r.div_ceil(8), 0) };
+                    let mut steps = Vec::new();
+                    let consts: Vec<Vec<u32>> = (0..t)
+                        .map(|j| vec![r, c, g.kind, j * c, j * r, 0, fl, 0, 0])
+                        .collect();
+                    for cs in &consts {
+                        steps.push(Step {
+                            kernel: &mv,
+                            buffers: &b,
+                            constants: cs,
+                            groups: [groups.min(65535), groups.div_ceil(65535), 1],
+                        });
+                    }
+                    gpu.pass(&steps).unwrap();
+                    gpu.read_floats(&y, 0, &stage, &mut want).unwrap();
+                    let ct = vec![r, c, g.kind, 0, 0, 0, fl, 0, 0, c, r, t];
+                    gpu.pass(&[Step {
+                        kernel: &mvt,
+                        buffers: &b,
+                        constants: &ct,
+                        groups: [groups.min(65535), groups.div_ceil(65535), 1],
+                    }])
+                    .unwrap();
+                    gpu.read_floats(&y, 0, &stage, &mut got).unwrap();
+                    let differ = got
+                        .iter()
+                        .zip(&want)
+                        .filter(|(a, b)| a.to_bits() != b.to_bits())
+                        .count();
+                    eprintln!(
+                        "{name} x{tokens} wide {wide}: {differ} of {} sums differ",
+                        got.len()
+                    );
+                    assert_eq!(differ, 0, "{name} x{tokens} wide {wide}");
+                }
+                let ct = vec![r, c, g.kind, 0, 0, 0, 0, 0, 0, c, r, t];
                 if g.kind == 3 {
                     // mvr: four rows per subgroup, its own order of the sums.
                     let rg = r.div_ceil(32);

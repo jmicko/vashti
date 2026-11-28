@@ -15,6 +15,7 @@ pub use spec::uses_report;
 
 /// The engine's kernels besides the products.
 struct Extra {
+    publish: Kernel,
     hcdot: Kernel,
     hcmix: Kernel,
     kda: Kernel,
@@ -167,6 +168,10 @@ pub struct Engine<'m> {
     /// Device bank slots per block (for blocks loaded later).
     slots1: usize,
     second: Option<crate::second::Second>,
+    /// With speculation, per block the experts the second device holds for verifications
+    /// (filled after the first prompt, from its use), and slots per block there.
+    tiers: Vec<Option<crate::second::Tier>>,
+    slots2: usize,
     out_norm: Buffer,
     output: Mat,
     embed: Matrix,
@@ -204,6 +209,8 @@ pub struct Engine<'m> {
     hall: Buffer,
     logits_t: Buffer,
     vin: Mapped,
+    /// The last verification sequence word written into `vin`.
+    vseq: std::sync::atomic::AtomicU32,
     cpu_t: Mapped,
     snaps: usize,
     /// Per MoE block (with speculation): the slot in its staging buffer of each expert the
@@ -283,6 +290,7 @@ impl<'m> Engine<'m> {
         let lanes = Some(k.lanes);
         let kernel = |spirv: &[u8], b, c| gpu.kernel(spirv, b, c, lanes);
         let e = Extra {
+            publish: gpu.kernel(include_bytes!("../shaders/publish.spv"), 3, 5, None)?,
             hcdot: kernel(include_bytes!("../shaders/hcdot.spv"), 9, 3)?,
             hcmix: kernel(include_bytes!("../shaders/hcmix.spv"), 6, 5)?,
             kda: kernel(include_bytes!("../shaders/kda.spv"), 8, 4)?,
@@ -366,6 +374,12 @@ impl<'m> Engine<'m> {
         };
         let v = |n: &str| m(n)?.decode_all();
         let up = |mx: &Matrix| Mat::upload(&gpu, mx);
+        let wide = |mx: &Matrix| {
+            Mat::upload(&gpu, mx).map(|mut m| {
+                m.wide = true;
+                m
+            })
+        };
         // A DSA block's attention (also the NextN block's).
         let dsa = |il: usize| -> Result<Attention> {
             let b = |n: &str| format!("blk.{il}.{n}");
@@ -384,7 +398,7 @@ impl<'m> Engine<'m> {
                     m(&b("indexer.attn_k.weight"))?,
                     m(&b("indexer_compressor_gate.weight"))?,
                 ]))?,
-                idx_proj: up(&m(&b("indexer.proj.weight"))?)?,
+                idx_proj: wide(&m(&b("indexer.proj.weight"))?)?,
                 idx_qb: up(&m(&b("indexer.attn_q_b.weight"))?)?,
                 idx_params: {
                     let mut p = v(&b("indexer.k_norm.weight"))?;
@@ -453,7 +467,7 @@ impl<'m> Engine<'m> {
                 }
             } else {
                 Ffn::Moe {
-                    router: up(&m(&b("ffn_gate_inp.weight"))?)?,
+                    router: wide(&m(&b("ffn_gate_inp.weight"))?)?,
                     bias: floats(&gpu, &v(&b("exp_probs_b.bias"))?)?,
                     gu: up(&concat(&[
                         m(&b("ffn_gate_shexp.weight"))?,
@@ -501,7 +515,7 @@ impl<'m> Engine<'m> {
             .is_some();
         // (The staging buffers exist with batching on cooperative matrices; see below.)
         let stage_empty = !(batch > 1 && e.b.mec.is_some());
-        let mtp = if drafts > 0 && has_mtp && batch > 1 && second.is_none() {
+        let mtp = if drafts > 0 && has_mtp && batch > 1 {
             let b = |n: &str| format!("blk.{il}.{n}");
             let mut norms = v(&b("nextn.enorm.weight"))?;
             for name in [
@@ -518,7 +532,7 @@ impl<'m> Engine<'m> {
                 eh: up(&m(&b("nextn.eh_proj.weight"))?)?,
                 norms: floats(&gpu, &norms)?,
                 attention: dsa(il)?,
-                router: up(&m(&b("ffn_gate_inp.weight"))?)?,
+                router: wide(&m(&b("ffn_gate_inp.weight"))?)?,
                 bias: floats(&gpu, &v(&b("exp_probs_b.bias"))?)?,
                 gu: up(&concat(&[
                     m(&b("ffn_gate_shexp.weight"))?,
@@ -597,6 +611,8 @@ impl<'m> Engine<'m> {
                 hp.experts_used,
                 n,
                 hp.ff_expert,
+                hp.experts,
+                drafts + 1,
             )?),
             None => None,
         };
@@ -614,10 +630,14 @@ impl<'m> Engine<'m> {
         });
         // KUNO_GLM_LAZY=0 (or a second device, or KUNO_GLM_NO_HOST): every block's experts
         // now; else each when first needed.
-        let lazy = second.is_none()
+        let lazy = (second.is_none() || mtp.is_some())
             && std::env::var_os("KUNO_GLM_NO_HOST").is_none()
             && !std::env::var("KUNO_GLM_LAZY").is_ok_and(|v| v == "0");
         let (slots1, _, per_slot) = experts::plan(model, budget, None)?;
+        let slots2 = match (&mtp, budget2) {
+            (Some(_), Some(b2)) => experts::plan(model, budget, Some(b2))?.1,
+            _ => 0,
+        };
         let experts: Vec<std::sync::OnceLock<BlockExperts>> = if lazy {
             eprintln!(
                 "experts: {slots1} slots per block on the device ({:.1} GB), loaded on the way",
@@ -681,6 +701,8 @@ impl<'m> Engine<'m> {
             experts,
             slots1,
             second,
+            tiers: Vec::new(),
+            slots2,
             embed: m("token_embd.weight")?,
             host_x: gpu.mapped((4 * n * 4 * batch) as u64)?,
             order: gpu.mapped((hp.layers * 2 * hp.experts * 4) as u64)?,
@@ -705,7 +727,9 @@ impl<'m> Engine<'m> {
             hall: gpu.buffer((batch * n * 4) as u64)?,
             mpart: gpu.buffer((16 * hp.heads * 514 * 4) as u64)?,
             logits_t: gpu.buffer((spec::SMALL * hp.vocab * 4) as u64)?,
-            vin: gpu.mapped((spec::SMALL * (2 * hp.experts_used + n) * 4) as u64)?,
+            // (+ the verification's sequence word)
+            vin: gpu.mapped(((spec::SMALL * (2 * hp.experts_used + n) + 4) * 4) as u64)?,
+            vseq: std::sync::atomic::AtomicU32::new(0),
             cpu_t: gpu.mapped((spec::SMALL * n * 4) as u64)?,
             snaps: drafts,
             trade_turn: std::sync::atomic::AtomicUsize::new(0),
@@ -939,7 +963,7 @@ impl<'m> Engine<'m> {
         let model = self.model;
         std::thread::scope(|sc| -> Result<()> {
             let first = todo[0];
-            let host = self.model.hp.experts - self.slots1;
+            let host = self.host_records();
             let gpu = &self.gpu;
             let mut next = Some(sc.spawn(move || experts::prefetch_block(model, gpu, first, host)));
             for (i, &il) in todo.iter().enumerate() {
@@ -1088,6 +1112,12 @@ impl<'m> Engine<'m> {
             eprintln!("traded {} experts", trades.len());
         }
         Ok(())
+    }
+
+    /// Host records per block: the experts off the device.
+    pub(super) fn host_records(&self) -> usize {
+        let e = self.model.hp.experts;
+        e - self.slots1.min(e)
     }
 
     /// Waits until the router's choice `seq` is visible in `route`: spinning on the word

@@ -83,6 +83,8 @@ pub struct Mat {
     pub cols: usize,
     pub w: Buffer,
     pub s: Buffer,
+    /// Few rows, each given a whole workgroup (as `step` runs it: mv.comp's flag 4).
+    pub wide: bool,
 }
 
 /// Q6_K blocks (210 bytes per 256 values) as `mv`'s kind 3: per block 13 uvec4 (low nibbles,
@@ -152,6 +154,7 @@ impl Mat {
             cols: m.cols,
             w: filled(gpu, &w)?,
             s: filled(gpu, &s)?,
+            wide: false,
         })
     }
 

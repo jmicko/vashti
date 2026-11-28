@@ -431,15 +431,14 @@ impl<'m> Engine<'m> {
         let pos = this.pos;
         let tu = t as u32;
         let (used, e_count, ff) = (hp.experts_used, hp.experts, hp.ff_expert);
-        let lp = this.batch * used + 8 * e_count;
         let mut ops: Vec<Op> = Vec::new();
         let mut pending: Vec<Passing> = Vec::new();
         let mut cur: Option<usize> = None;
         let mut next: (u32, &Buffer, u32, &Buffer, u32) = (0, &s.out, 0, &s.zeros, 0);
         let mut next3: (&Buffer, u32) = (&s.zeros, 0);
         let started = std::time::Instant::now();
-        let (mut wait_s, mut cpu_s) = (0f64, 0f64);
-        let (mut n_pairs, mut n_unique, mut n_gpu) = (0usize, 0usize, 0usize);
+        let (mut wait_s, mut cpu_s, mut second_s) = (0f64, 0f64, 0f64);
+        let (mut n_pairs, mut n_unique, mut n_gpu, mut n_second) = (0usize, 0usize, 0usize, 0usize);
         for (il, blk) in this.blocks.iter().enumerate() {
             let c = bmix3(this, hp, &mut ops, t, cur, &blk.attn, next, next3);
             cur = Some(c);
@@ -507,32 +506,27 @@ impl<'m> Engine<'m> {
                         groups: [1, 1, tu],
                         independent: false,
                     });
+                    // The choice and inputs to the host for the CPU's experts, then the
+                    // sequence word the host spins on.
+                    let vseq = this
+                        .vseq
+                        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                        .wrapping_add(1)
+                        | 1 << 31;
+                    let vseq_at = SMALL * (2 * used + n);
                     ops.push(Op {
-                        kernel: &this.e.b.group,
-                        buffers: vec![&s.routed, &s.lists, this.usage.buffer()],
+                        kernel: &this.e.publish,
+                        buffers: vec![&s.routed, &s.normed, this.vin.buffer()],
                         constants: vec![
-                            tu,
-                            used as u32,
-                            e_count as u32,
-                            (il * e_count) as u32,
-                            lp as u32,
+                            (t * 2 * used) as u32,
+                            (t * n) as u32,
+                            (t * 2 * used) as u32,
+                            vseq_at as u32,
+                            vseq,
                         ],
                         groups: [1, 1, 1],
                         independent: false,
                     });
-                    // The choice and inputs to the host for the CPU's experts.
-                    for (src, words, at) in [
-                        (&s.routed, t * 2 * used, 0),
-                        (&s.normed, t * n, t * 2 * used),
-                    ] {
-                        ops.push(Op {
-                            kernel: &this.e.copyoff,
-                            buffers: vec![src, this.vin.buffer()],
-                            constants: vec![words as u32, 0, at as u32],
-                            groups: grid(words.div_ceil(256)),
-                            independent: true,
-                        });
-                    }
                     let routed = submit(this, &mut ops)?;
                     // The shared expert and the device's experts meanwhile.
                     let ffs = gu.rows / 2;
@@ -606,7 +600,28 @@ impl<'m> Engine<'m> {
                     }
                     pending.push(submit(this, &mut ops)?);
                     let tw = std::time::Instant::now();
-                    routed.wait()?;
+                    if std::env::var("KUNO_GLM_VSPIN").is_ok_and(|v| v == "0") {
+                        routed.wait()?;
+                    } else {
+                        let mut word = [0f32; 1];
+                        let at = (vseq_at * 4) as u64;
+                        loop {
+                            this.gpu.read_mapped(&this.vin, at, &mut word)?;
+                            if word[0].to_bits() == vseq {
+                                pending.push(routed);
+                                break;
+                            }
+                            if tw.elapsed().as_secs() >= 2 {
+                                routed.wait()?;
+                                this.gpu.read_mapped(&this.vin, at, &mut word)?;
+                                if word[0].to_bits() != vseq {
+                                    return Err("gpu_failed");
+                                }
+                                break;
+                            }
+                            std::hint::spin_loop();
+                        }
+                    }
                     wait_s += tw.elapsed().as_secs_f64();
                     let mut r = vec![0f32; t * (2 * used + n)];
                     this.gpu.read_mapped(&this.vin, 0, &mut r)?;
@@ -619,6 +634,20 @@ impl<'m> Engine<'m> {
                                 .collect()
                         })
                         .collect();
+                    // The batch's choices per expert, for the banks' scores (memory only).
+                    {
+                        let mut c = vec![0u32; e_count];
+                        for &e in ids.iter().flatten() {
+                            if let Some(v) = c.get_mut(e) {
+                                *v += 1;
+                            }
+                        }
+                        this.gpu.write_mapped(
+                            &this.usage,
+                            (il * e_count * 4) as u64,
+                            &kuno_image::engine::gpu::floats(bytes_of(&c)),
+                        )?;
+                    }
                     // KUNO_GLM_GPU_SHARE of the host experts (those most tokens chose) streamed
                     // to the device and run there while the CPU runs the rest.
                     let mut users = std::collections::BTreeMap::<usize, usize>::new();
@@ -722,6 +751,43 @@ impl<'m> Engine<'m> {
                         next3 = (&s.gd, n as u32);
                     }
                     pending.push(submit(this, &mut ops)?);
+                    // The second device's held experts (not on the main one) meanwhile.
+                    let mut held = Vec::new();
+                    let second = match (&this.second, this.tiers.get(il).and_then(|x| x.as_ref())) {
+                        (Some(sd), Some(tier)) => {
+                            let mut map = vec![u32::MAX; e_count];
+                            for &e in ids.iter().flatten() {
+                                if ex.host_slot[e].is_some()
+                                    && tier.held[e] != u32::MAX
+                                    && !gpu_set.contains(&e)
+                                {
+                                    map[e] = tier.held[e];
+                                    held.push(e);
+                                }
+                            }
+                            if held.is_empty() {
+                                None
+                            } else {
+                                Some((
+                                    sd,
+                                    sd.begin_small(
+                                        tier,
+                                        (gk, dk),
+                                        ex.stride.map(|v| v as u32),
+                                        &map,
+                                        choice,
+                                        xs,
+                                        t,
+                                        limit,
+                                    )?,
+                                ))
+                            }
+                        }
+                        _ => None,
+                    };
+                    held.sort_unstable();
+                    held.dedup();
+                    n_second += held.len();
                     // The CPU's share meanwhile.
                     let tc = std::time::Instant::now();
                     let kept: Vec<(Vec<usize>, Vec<f32>)> = (0..t)
@@ -730,7 +796,9 @@ impl<'m> Engine<'m> {
                             ids[i]
                                 .iter()
                                 .zip(w)
-                                .filter(|(e, _)| !gpu_set.contains(e))
+                                .filter(|(e, _)| {
+                                    !gpu_set.contains(e) && held.binary_search(e).is_err()
+                                })
                                 .map(|(e, w)| (*e, *w))
                                 .unzip()
                         })
@@ -750,9 +818,14 @@ impl<'m> Engine<'m> {
                     let picks: Vec<(&[usize], &[f32])> =
                         kept.iter().map(|(a, b)| (&a[..], &b[..])).collect();
                     let inputs: Vec<&[f32]> = (0..t).map(|i| &xs[i * n..][..n]).collect();
-                    let sums: Vec<f32> = ex.cpu_sums(&picks, &inputs, ff, limit).concat();
-                    this.gpu.write_mapped(&this.cpu_t, 0, &sums)?;
+                    let mut sums: Vec<f32> = ex.cpu_sums(&picks, &inputs, ff, limit).concat();
                     cpu_s += tc.elapsed().as_secs_f64();
+                    if let Some((sd, passing)) = second {
+                        let tw = std::time::Instant::now();
+                        sd.finish_small(passing, &mut sums)?;
+                        second_s += tw.elapsed().as_secs_f64();
+                    }
+                    this.gpu.write_mapped(&this.cpu_t, 0, &sums)?;
                     next = (2, &s.a, n as u32, this.cpu_t.buffer(), n as u32);
                 }
             }
@@ -804,10 +877,11 @@ impl<'m> Engine<'m> {
         this.gpu.read_mapped(&this.token, 0, &mut tok)?;
         if std::env::var_os("KUNO_GLM_TIMING").is_some() {
             eprintln!(
-                "small batch of {t}: {:.1} ms; router waits {:.1} ms, CPU experts {:.1} ms ({n_unique} experts, {n_pairs} uses; {n_gpu} on the device)",
+                "small batch of {t}: {:.1} ms; router waits {:.1} ms, CPU experts {:.1} ms ({n_unique} experts, {n_pairs} uses; {n_gpu} on the device, {n_second} on the second, waits {:.1} ms)",
                 started.elapsed().as_secs_f64() * 1e3,
                 wait_s * 1e3,
-                cpu_s * 1e3
+                cpu_s * 1e3,
+                second_s * 1e3
             );
         }
         Ok(tok.iter().map(|v| v.to_bits()).collect())

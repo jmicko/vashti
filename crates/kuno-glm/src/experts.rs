@@ -495,8 +495,15 @@ pub fn place_block(
                 .collect()
         };
         let per_chunk = ((1usize << 30) / slot_bytes).max(1);
+        let total = on_host.len() + 1;
+        let last = (total - (total.div_ceil(per_chunk) - 1) * per_chunk) * slot_bytes;
         let arena = match arena {
-            Some(a) if a.len() == (on_host.len() + 1).div_ceil(per_chunk) => a,
+            Some(a)
+                if a.len() == total.div_ceil(per_chunk)
+                    && a.last().is_some_and(|m| m.buffer().bytes() == last as u64) =>
+            {
+                a
+            }
             _ => host_arena(gpu, slot_bytes, on_host.len())?,
         };
         let mut host_slot = vec![None; hp.experts];

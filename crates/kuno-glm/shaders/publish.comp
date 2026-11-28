@@ -1,0 +1,21 @@
+// A verification's router choice and inputs to the host (one workgroup): a's first na words
+// to dst[0..], b's first nb words to dst[at_b..], then, once they are visible, `seq` at word
+// seq_at (the host spins on it instead of waiting for the fence). The writes are coherent, as
+// route.comp's: plain stores could reach host memory after the sequence word.
+#version 460
+layout(local_size_x = 1024) in;
+layout(set = 0, binding = 0) readonly buffer A { uint a[]; };
+layout(set = 0, binding = 1) readonly buffer B { uint b[]; };
+layout(set = 0, binding = 2) coherent buffer Dst { uint dst[]; };
+layout(push_constant) uniform Constants { uint na; uint nb; uint at_b; uint seq_at; uint seq; } p;
+void main() {
+    uint lane = gl_LocalInvocationIndex;
+    for (uint i = lane; i < p.na; i += 1024) dst[i] = a[i];
+    for (uint i = lane; i < p.nb; i += 1024) dst[p.at_b + i] = b[i];
+    memoryBarrierBuffer();
+    barrier();
+    if (lane == 0) {
+        memoryBarrierBuffer();
+        dst[p.seq_at] = p.seq;
+    }
+}

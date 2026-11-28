@@ -3,7 +3,8 @@
 // t*y_st + y_off (floats). One subgroup per row, several rows per workgroup; each weight is
 // read and decoded once for all the tokens. Per token the sums are mv.comp's, in its order
 // (four interleaved accumulators, the same products), so the results equal `step`'s.
-// Weight kinds, flags (2: add into y) and the per-head grouping as in mv.comp (no wide mode).
+// Weight kinds, flags (2: add into y; 4: a workgroup per row, mv.comp's wide mode) and the
+// per-head grouping as in mv.comp.
 #version 460
 #extension GL_KHR_shader_subgroup_arithmetic : require
 layout(local_size_x = 128) in;
@@ -17,6 +18,7 @@ layout(push_constant) uniform Constants {
 } p;
 
 const uint TT = 4;
+shared float wide_part[TT][32];
 
 vec4 q4(int v, float sc) {
     return vec4(bitfieldExtract(v, 0, 8), bitfieldExtract(v, 8, 8),
@@ -92,9 +94,11 @@ void part(uint wr, uint i, uint xb, uint xs, uint nt, out float o[TT]) {
 
 void main() {
     uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
-    uint r = group * gl_NumSubgroups + gl_SubgroupID;
+    bool wide = (p.flags & 4) != 0;
+    uint r = wide ? group : group * gl_NumSubgroups + gl_SubgroupID;
     if (r >= p.rows) return;
-    uint lane = gl_SubgroupInvocationID, width = gl_SubgroupSize;
+    uint lane = wide ? gl_LocalInvocationIndex : gl_SubgroupInvocationID;
+    uint width = wide ? gl_WorkGroupSize.x : gl_SubgroupSize;
     uint wr = r + p.w_row0;
     uint tasks = p.kind == 3 ? p.cols / 32 : (p.kind == 0 ? p.cols / 16 : p.cols / 4);
     uint xb = (p.x_off + (p.group > 0 ? (r / p.group) * p.gstride : 0)) / 4, xs = p.x_st / 4;
@@ -122,9 +126,22 @@ void main() {
         for (uint j = 0; j < TT; j++) a1[j] += o[j];
     }
     bool add = (p.flags & 2) != 0;
+    if (wide) {
+        for (uint j = 0; j < TT; j++) {
+            float v = subgroupAdd((a1[j] + a2[j]) + (a3[j] + a4[j]));
+            if (gl_SubgroupInvocationID == 0) wide_part[j][gl_SubgroupID] = v;
+        }
+        barrier();
+    }
     for (uint j = 0; j < TT; j++) {
         if (j >= nt) break;
-        float v = subgroupAdd((a1[j] + a2[j]) + (a3[j] + a4[j]));
+        float v;
+        if (wide) {
+            v = 0.0;
+            for (uint g = 0; g < gl_NumSubgroups; g++) v += wide_part[j][g];
+        } else {
+            v = subgroupAdd((a1[j] + a2[j]) + (a3[j] + a4[j]));
+        }
         if (lane == 0) {
             uint ya = j * p.y_st + p.y_off + r;
             y[ya] = add ? y[ya] + v : v;
