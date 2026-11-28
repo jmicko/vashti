@@ -10,6 +10,7 @@
 //! warm the banks. Results agree with the CPU reference to about 2e-3 (the half-precision
 //! inputs), closer than `step`'s CPU experts.
 use super::*;
+use kuno_image::engine::gpu::Timeline;
 
 /// The second dimension of a large one-dimensional grid (as copyoff.comp, glu.comp).
 fn grid(groups: usize) -> [u32; 3] {
@@ -28,6 +29,35 @@ struct Source<'a> {
     copy: Option<(&'a Buffer, &'a Buffer, u32, u32)>,
 }
 
+/// Submits the recorded steps on the main queue (or the side queue), after `waits` and
+/// signalling `signals` (the timelines' values).
+fn submit_sync<'a>(
+    this: &'a Engine,
+    ops: &mut Vec<Op<'a>>,
+    side: bool,
+    waits: &[(&Timeline, u64)],
+    signals: &[(&Timeline, u64)],
+) -> Result<Passing> {
+    let steps: Vec<Step> = ops
+        .iter()
+        .map(|o| Step {
+            kernel: o.kernel,
+            buffers: &o.buffers,
+            constants: &o.constants,
+            groups: o.groups,
+        })
+        .collect();
+    let independent: Vec<bool> = ops.iter().map(|o| o.independent).collect();
+    // SAFETY: every buffer belongs to the engine and the timelines too, which outlive the
+    // pass (waited for before `run_batch` returns).
+    let passing = unsafe {
+        this.gpu
+            .pass_sync(side, &steps, &independent, waits, signals)?
+    };
+    ops.clear();
+    Ok(passing)
+}
+
 /// The shortest prompt worth a batch.
 const MIN_BATCH: usize = 32;
 
@@ -37,10 +67,10 @@ impl<'m> Engine<'m> {
     pub fn prefill(&mut self, tokens: &[u32]) -> Result<u32> {
         let sequential = self.batch < 2
             || self.e.b.mec.is_none()
-            // mlab.comp's shape: latents of 512, heads in fours.
+            // mlab.comp's shape: latents of 512, heads in sixteens.
             || self.model.hp.kv_lora != 512
-            || !self.model.hp.heads.is_multiple_of(4)
-            || self.experts.iter().flatten().any(|e| e.device2.is_some())
+            || !self.model.hp.heads.is_multiple_of(16)
+            || self.second.is_some()
             || self.trace.is_some() && std::env::var_os("KUNO_GLM_TRACE_BATCH").is_none();
         let mut next = Err("prompt_empty");
         if sequential {
@@ -88,7 +118,7 @@ impl<'m> Engine<'m> {
             let mut ops: Vec<Op> = Vec::new();
             let mut planned = Vec::new();
             for (il, ex) in this.experts.iter().enumerate() {
-                let Some(ex) = ex else { continue };
+                let Some(ex) = ex.get() else { continue };
                 if planned.len() >= this.trade_stage.len() {
                     break;
                 }
@@ -104,7 +134,7 @@ impl<'m> Engine<'m> {
             drop(ops);
             for t in &planned {
                 self.experts[t.block]
-                    .as_mut()
+                    .get_mut()
                     .ok_or("model_state_invalid")?
                     .settle(t);
             }
@@ -132,13 +162,19 @@ impl<'m> Engine<'m> {
         Ok(())
     }
 
-    /// Each MoE block's order for mme: its device slots' experts, then its host slots'.
+    /// Each MoE block's order for mec: its device slots' experts, then its host slots'.
     fn write_order(&self) -> Result<()> {
+        for il in 0..self.model.hp.layers {
+            self.write_order_block(il)?;
+        }
+        Ok(())
+    }
+
+    /// Block `il`'s order (every entry empty while its experts are not loaded).
+    pub(super) fn write_order_block(&self, il: usize) -> Result<()> {
         let e = self.model.hp.experts;
-        let mut order = vec![u32::MAX; self.model.hp.layers * 2 * e];
-        for (il, ex) in self.experts.iter().enumerate() {
-            let Some(ex) = ex else { continue };
-            let o = &mut order[il * 2 * e..][..2 * e];
+        let mut o = vec![u32::MAX; 2 * e];
+        if let Some(ex) = self.experts[il].get() {
             for (k, r) in ex.resident.iter().enumerate() {
                 o[k] = r.map_or(u32::MAX, |x| x as u32);
             }
@@ -151,14 +187,15 @@ impl<'m> Engine<'m> {
         }
         self.gpu.write_mapped(
             &self.order,
-            0,
-            &kuno_image::engine::gpu::floats(bytes_of(&order)),
+            (il * 2 * e * 4) as u64,
+            &kuno_image::engine::gpu::floats(bytes_of(&o)),
         )
     }
 
     /// Block `il`'s expert sources: the device's bank, then the host slots in pieces that
     /// alternate between the two staging buffers.
-    fn sources<'a>(&'a self, il: usize, ex: &'a BlockExperts) -> Vec<Source<'a>> {
+    /// `first`: the batch-wide number of the block's first piece (its buffer in the ring).
+    fn sources<'a>(&'a self, il: usize, ex: &'a BlockExperts, first_piece: u64) -> Vec<Source<'a>> {
         let base = (il * 2 * self.model.hp.experts) as u32;
         let mut out = Vec::new();
         if let Some(pool) = &ex.device {
@@ -180,7 +217,7 @@ impl<'m> Engine<'m> {
             let slots = ((b.bytes() / (u64::from(rec) * 4)) as usize).min(ex.per_chunk);
             for first in (0..slots).step_by(self.piece) {
                 let count = self.piece.min(slots - first);
-                let to = &self.stage[k % 2];
+                let to = &self.stage[(first_piece as usize + k) % self.stage.len()];
                 k += 1;
                 out.push(Source {
                     gu: (to, to, 0, rec, st[0], rec),
@@ -224,410 +261,513 @@ impl<'m> Engine<'m> {
         let (used, e_count, ff) = (hp.experts_used, hp.experts, hp.ff_expert);
         // The lists' capacity (as allocated).
         let lp = this.batch * used + 8 * e_count;
-        for (il, blk) in this.blocks.iter().enumerate() {
-            let c = bmix(this, &hp, &mut ops, t, cur, &blk.attn, next);
-            cur = Some(c);
-            if this.trace.is_some() && il > 0 {
-                pending.push(submit(this, &mut ops)?);
-                for p in pending.drain(..) {
-                    p.wait()?;
-                }
-                traces.push(self_mean_at(&this.gpu, &s.x[c], n, t - 1)?);
-            }
-            match &blk.attention {
-                Attention::Kda {
-                    qkv,
-                    small,
-                    fg_b,
-                    conv,
-                    params,
-                    out,
-                    hist,
-                    state,
-                } => {
-                    let d = hp.kda_head * hp.heads;
-                    let sr = small.rows;
-                    mm(
-                        this,
-                        &mut ops,
-                        qkv,
-                        &s.normed,
-                        0,
-                        n,
-                        &s.a,
-                        0,
-                        3 * d,
-                        t,
-                        (0, 0),
-                    );
-                    mm(
-                        this,
-                        &mut ops,
-                        small,
-                        &s.normed,
-                        0,
-                        n,
-                        &s.c,
-                        0,
-                        sr,
-                        t,
-                        (0, 0),
-                    );
-                    mm(
-                        this,
-                        &mut ops,
-                        fg_b,
-                        &s.c,
-                        0,
-                        sr,
-                        &s.b,
-                        0,
-                        2 * d,
-                        t,
-                        (d, 128),
-                    );
-                    ops.push(Op {
-                        kernel: &this.e.b.kda,
-                        buffers: vec![&s.a, conv, hist, &s.b, &s.c, params, state, &s.out],
-                        constants: vec![
-                            d as u32,
-                            f(hp.gate_lower_bound),
-                            f(hp.rms_eps),
-                            256,
-                            tu,
-                            (3 * d) as u32,
-                            (2 * d) as u32,
-                            sr as u32,
-                            d as u32,
-                        ],
-                        groups: [hp.heads as u32, 1, 1],
-                        independent: false,
-                    });
-                    mm(this, &mut ops, out, &s.out, 0, d, &s.a, 0, n, t, (0, 0));
-                }
-                Attention::Dsa {
-                    q_a,
-                    kv_a,
-                    norms,
-                    q_b,
-                    k_b,
-                    v_b,
-                    out,
-                    latents,
-                    idx_kg,
-                    idx_proj,
-                    idx_qb,
-                    idx_params,
-                    idx_keys,
-                    idx_pooled,
-                } => {
-                    let (ql, lora) = (hp.q_lora, hp.kv_lora);
-                    let qa = ql + lora;
-                    mm(
-                        this,
-                        &mut ops,
-                        idx_kg,
-                        &s.normed,
-                        0,
-                        n,
-                        &s.ia,
-                        0,
-                        288,
-                        t,
-                        (0, 0),
-                    );
-                    mm(
-                        this,
-                        &mut ops,
-                        idx_proj,
-                        &s.normed,
-                        0,
-                        n,
-                        &s.ia,
-                        256,
-                        288,
-                        t,
-                        (0, 0),
-                    );
-                    mm(this, &mut ops, q_a, &s.normed, 0, n, &s.c, 0, qa, t, (0, 0));
-                    mm(
-                        this,
-                        &mut ops,
-                        kv_a,
-                        &s.normed,
-                        0,
-                        n,
-                        &s.c,
-                        ql,
-                        qa,
-                        t,
-                        (0, 0),
-                    );
-                    ops.push(Op {
-                        kernel: &this.e.b.dsanorm,
-                        buffers: vec![&s.c, norms, &s.out, latents],
-                        constants: vec![
-                            ql as u32,
-                            lora as u32,
-                            pos as u32,
-                            f(hp.rms_eps),
-                            qa as u32,
-                            ql as u32,
-                        ],
-                        groups: [1, 1, tu],
-                        independent: false,
-                    });
-                    for phase in [1, 2] {
-                        ops.push(Op {
-                            kernel: &this.e.b.idxstore,
-                            buffers: vec![&s.ia, idx_params, idx_keys, idx_pooled],
-                            constants: vec![pos as u32, f(1e-6), 288, phase],
-                            groups: [1, 1, tu],
-                            independent: false,
-                        });
+        // Pieces streamed so far (the timelines' values); the ring with a side queue (not
+        // while profiling: profiled passes run one at a time, without the timelines).
+        let mut piece_no = this.streamed.load(std::sync::atomic::Ordering::Relaxed);
+        let ring = this.copied.is_some() && std::env::var_os("KUNO_GLM_PROFILE").is_none();
+        // Experts still to load are read a block ahead by threads of their own, beside the
+        // placement of the block before (CPU) and the device's work.
+        std::thread::scope(|sc| -> Result<()> {
+            type Fetched = Result<(Vec<Vec<u8>>, Vec<Mapped>)>;
+            let mut prefetch: Option<(usize, std::thread::ScopedJoinHandle<'_, Fetched>)> = None;
+            let host = hp.experts - this.slots1.min(hp.experts);
+            let gpu = &this.gpu;
+            for (il, blk) in this.blocks.iter().enumerate() {
+                let c = bmix(this, &hp, &mut ops, t, cur, &blk.attn, next);
+                cur = Some(c);
+                if this.trace.is_some() && il > 0 {
+                    pending.push(submit(this, &mut ops)?);
+                    for p in pending.drain(..) {
+                        p.wait()?;
                     }
-                    let kpool = hp.indexer_kpool;
-                    let keep = hp.indexer_top_k / kpool;
-                    let last_pools = (pos + t) / kpool;
-                    let score_st = (this.max_positions / 4).max(4);
-                    let idx_st = hp.indexer_top_k + kpool;
-                    if last_pools > keep {
+                    traces.push(self_mean_at(&this.gpu, &s.x[c], n, t - 1)?);
+                }
+                match &blk.attention {
+                    Attention::Kda {
+                        qkv,
+                        small,
+                        fg_b,
+                        conv,
+                        params,
+                        out,
+                        hist,
+                        state,
+                    } => {
+                        let d = hp.kda_head * hp.heads;
+                        let sr = small.rows;
                         mm(
                             this,
                             &mut ops,
-                            idx_qb,
-                            &s.out,
+                            qkv,
+                            &s.normed,
                             0,
+                            n,
+                            &s.a,
+                            0,
+                            3 * d,
+                            t,
+                            (0, 0),
+                        );
+                        mm(
+                            this,
+                            &mut ops,
+                            small,
+                            &s.normed,
+                            0,
+                            n,
+                            &s.c,
+                            0,
+                            sr,
+                            t,
+                            (0, 0),
+                        );
+                        mm(
+                            this,
+                            &mut ops,
+                            fg_b,
+                            &s.c,
+                            0,
+                            sr,
+                            &s.b,
+                            0,
+                            2 * d,
+                            t,
+                            (d, 128),
+                        );
+                        ops.push(Op {
+                            kernel: &this.e.b.kda,
+                            buffers: vec![&s.a, conv, hist, &s.b, &s.c, params, state, &s.out],
+                            constants: vec![
+                                d as u32,
+                                f(hp.gate_lower_bound),
+                                f(hp.rms_eps),
+                                256,
+                                tu,
+                                (3 * d) as u32,
+                                (2 * d) as u32,
+                                sr as u32,
+                                d as u32,
+                            ],
+                            groups: [hp.heads as u32, 1, 1],
+                            independent: false,
+                        });
+                        mm(this, &mut ops, out, &s.out, 0, d, &s.a, 0, n, t, (0, 0));
+                    }
+                    Attention::Dsa {
+                        q_a,
+                        kv_a,
+                        norms,
+                        q_b,
+                        k_b,
+                        v_b,
+                        out,
+                        latents,
+                        idx_kg,
+                        idx_proj,
+                        idx_qb,
+                        idx_params,
+                        idx_keys,
+                        idx_pooled,
+                    } => {
+                        let (ql, lora) = (hp.q_lora, hp.kv_lora);
+                        let qa = ql + lora;
+                        mm(
+                            this,
+                            &mut ops,
+                            idx_kg,
+                            &s.normed,
+                            0,
+                            n,
+                            &s.ia,
+                            0,
+                            288,
+                            t,
+                            (0, 0),
+                        );
+                        mm(
+                            this,
+                            &mut ops,
+                            idx_proj,
+                            &s.normed,
+                            0,
+                            n,
+                            &s.ia,
+                            256,
+                            288,
+                            t,
+                            (0, 0),
+                        );
+                        mm(this, &mut ops, q_a, &s.normed, 0, n, &s.c, 0, qa, t, (0, 0));
+                        mm(
+                            this,
+                            &mut ops,
+                            kv_a,
+                            &s.normed,
+                            0,
+                            n,
+                            &s.c,
                             ql,
-                            &s.ib,
-                            0,
-                            4096,
+                            qa,
                             t,
                             (0, 0),
                         );
                         ops.push(Op {
-                            kernel: &this.e.b.idxscore,
-                            buffers: vec![&s.ib, &s.ia, idx_pooled, &s.iscore],
+                            kernel: &this.e.b.dsanorm,
+                            buffers: vec![&s.c, norms, &s.out, latents],
                             constants: vec![
-                                0,
-                                f(1.0 / ((128 * 32) as f32).sqrt()),
-                                256,
+                                ql as u32,
+                                lora as u32,
                                 pos as u32,
-                                keep as u32,
-                                kpool as u32,
-                                288,
-                                score_st as u32,
-                            ],
-                            groups: [(last_pools as u32).div_ceil(128), 1, tu],
-                            independent: false,
-                        });
-                        ops.push(Op {
-                            kernel: &this.e.b.idxselect,
-                            buffers: vec![&s.iscore, &s.iidx],
-                            constants: vec![
-                                pos as u32,
-                                keep as u32,
-                                kpool as u32,
-                                score_st as u32,
-                                idx_st as u32,
+                                f(hp.rms_eps),
+                                qa as u32,
+                                ql as u32,
                             ],
                             groups: [1, 1, tu],
                             independent: false,
                         });
-                    }
-                    let (hq, hl, hv) =
-                        (hp.heads * hp.qk_head, hp.heads * lora, hp.heads * hp.v_head);
-                    mm(this, &mut ops, q_b, &s.out, 0, ql, &s.a, 0, hq, t, (0, 0));
-                    mm(
-                        this,
-                        &mut ops,
-                        k_b,
-                        &s.a,
-                        0,
-                        hq,
-                        &s.b,
-                        0,
-                        hl,
-                        t,
-                        (lora, hp.qk_head),
-                    );
-                    ops.push(Op {
-                        kernel: &this.e.b.mla,
-                        buffers: vec![&s.b, latents, &s.c, &s.iidx],
-                        constants: vec![
-                            lora as u32,
-                            f(1.0 / (hp.qk_head as f32).sqrt()),
-                            pos as u32,
-                            hp.indexer_top_k as u32,
-                            kpool as u32,
-                            hl as u32,
-                            hl as u32,
-                            idx_st as u32,
-                        ],
-                        groups: [(hp.heads / 4) as u32, tu, 1],
-                        independent: false,
-                    });
-                    mm(
-                        this,
-                        &mut ops,
-                        v_b,
-                        &s.c,
-                        0,
-                        hl,
-                        &s.out,
-                        0,
-                        hv,
-                        t,
-                        (hp.v_head, lora),
-                    );
-                    mm(this, &mut ops, out, &s.out, 0, hv, &s.a, 0, n, t, (0, 0));
-                }
-            }
-            let c = bmix(
-                this,
-                &hp,
-                &mut ops,
-                t,
-                cur,
-                &blk.ffn_mixer,
-                (1, &s.a, n as u32, &s.zeros, 0),
-            );
-            cur = Some(c);
-            match &blk.ffn {
-                Ffn::Dense { gu, down } => {
-                    let ffd = gu.rows / 2;
-                    mm(
-                        this,
-                        &mut ops,
-                        gu,
-                        &s.normed,
-                        0,
-                        n,
-                        &s.out,
-                        0,
-                        2 * ffd,
-                        t,
-                        (0, 0),
-                    );
-                    ops.push(Op {
-                        kernel: &this.e.glu,
-                        buffers: vec![&s.out, &s.b],
-                        constants: vec![ffd as u32, f(hp.clamp_shared[il]), tu],
-                        groups: grid((t * ffd).div_ceil(256)),
-                        independent: false,
-                    });
-                    mm(this, &mut ops, down, &s.b, 0, ffd, &s.a, 0, n, t, (0, 0));
-                    next = (1, &s.a, n as u32, &s.zeros, 0);
-                }
-                Ffn::Moe {
-                    router,
-                    bias,
-                    gu,
-                    down,
-                } => {
-                    mm(
-                        this,
-                        &mut ops,
-                        router,
-                        &s.normed,
-                        0,
-                        n,
-                        &s.c,
-                        0,
-                        e_count,
-                        t,
-                        (0, 0),
-                    );
-                    ops.push(Op {
-                        kernel: &this.e.b.route,
-                        buffers: vec![&s.c, bias, &s.normed, this.route.buffer(), &s.routed],
-                        constants: vec![e_count as u32, used as u32, f(hp.expert_scale)],
-                        groups: [1, 1, tu],
-                        independent: false,
-                    });
-                    ops.push(Op {
-                        kernel: &this.e.b.group,
-                        buffers: vec![&s.routed, &s.lists, this.usage.buffer()],
-                        constants: vec![
-                            tu,
-                            used as u32,
-                            e_count as u32,
-                            (il * e_count) as u32,
-                            lp as u32,
-                        ],
-                        groups: [1, 1, 1],
-                        independent: false,
-                    });
-                    // The shared expert.
-                    let ffs = gu.rows / 2;
-                    mm(
-                        this,
-                        &mut ops,
-                        gu,
-                        &s.normed,
-                        0,
-                        n,
-                        &s.out,
-                        0,
-                        2 * ffs,
-                        t,
-                        (0, 0),
-                    );
-                    ops.push(Op {
-                        kernel: &this.e.glu,
-                        buffers: vec![&s.out, &s.b],
-                        constants: vec![ffs as u32, f(hp.clamp_shared[il]), tu],
-                        groups: grid((t * ffs).div_ceil(256)),
-                        independent: false,
-                    });
-                    mm(this, &mut ops, down, &s.b, 0, ffs, &s.a, 0, n, t, (0, 0));
-                    // The routed experts, from each source (disjoint outputs: no barriers
-                    // between sources).
-                    let ex = this.experts[il].as_ref().ok_or("model_state_invalid")?;
-                    let (gk, dk) = (experts::kind(ex.gate_kind)?, experts::kind(ex.down_kind)?);
-                    let sources = this.sources(il, ex);
-                    let k = (gk, dk, used, e_count, ff, t);
-                    let limit = hp.clamp_expert[il];
-                    // The bank's experts beside the first piece's copy; then per piece its
-                    // gate|up beside the next piece's copy, and its down.
-                    let staged: Vec<&Source> =
-                        sources.iter().filter(|s| s.copy.is_some()).collect();
-                    let bank = sources.iter().find(|s| s.copy.is_none());
-                    if let Some(c) = staged.first().and_then(|s| s.copy) {
-                        let mut op = copy_op(this, c);
-                        op.independent = bank.is_some();
-                        ops.push(op);
-                    }
-                    if let Some(b) = bank {
-                        ops.push(mec_op(this, b, 0, k, limit, false)?);
-                        ops.push(mec_op(this, b, 1, k, limit, false)?);
-                    }
-                    for (i, src) in staged.iter().enumerate() {
-                        let copy = staged.get(i + 1).and_then(|s| s.copy);
-                        ops.push(mec_op(this, src, 0, k, limit, copy.is_some())?);
-                        if let Some(c) = copy {
-                            ops.push(copy_op(this, c));
+                        for phase in [1, 2] {
+                            ops.push(Op {
+                                kernel: &this.e.b.idxstore,
+                                buffers: vec![&s.ia, idx_params, idx_keys, idx_pooled],
+                                constants: vec![pos as u32, f(1e-6), 288, phase],
+                                groups: [1, 1, tu],
+                                independent: false,
+                            });
                         }
-                        ops.push(mec_op(this, src, 1, k, limit, false)?);
+                        let kpool = hp.indexer_kpool;
+                        let keep = hp.indexer_top_k / kpool;
+                        let last_pools = (pos + t) / kpool;
+                        let score_st = (this.max_positions / 4).max(4);
+                        let idx_st = hp.indexer_top_k + kpool;
+                        if last_pools > keep {
+                            mm(
+                                this,
+                                &mut ops,
+                                idx_qb,
+                                &s.out,
+                                0,
+                                ql,
+                                &s.ib,
+                                0,
+                                4096,
+                                t,
+                                (0, 0),
+                            );
+                            ops.push(Op {
+                                kernel: &this.e.b.idxscore,
+                                buffers: vec![&s.ib, &s.ia, idx_pooled, &s.iscore],
+                                constants: vec![
+                                    0,
+                                    f(1.0 / ((128 * 32) as f32).sqrt()),
+                                    256,
+                                    pos as u32,
+                                    keep as u32,
+                                    kpool as u32,
+                                    288,
+                                    score_st as u32,
+                                ],
+                                groups: [(last_pools as u32).div_ceil(128), 1, tu],
+                                independent: false,
+                            });
+                            ops.push(Op {
+                                kernel: &this.e.b.idxselect,
+                                buffers: vec![&s.iscore, &s.iidx],
+                                constants: vec![
+                                    pos as u32,
+                                    keep as u32,
+                                    kpool as u32,
+                                    score_st as u32,
+                                    idx_st as u32,
+                                ],
+                                groups: [1, 1, tu],
+                                independent: false,
+                            });
+                        }
+                        let (hq, hl, hv) =
+                            (hp.heads * hp.qk_head, hp.heads * lora, hp.heads * hp.v_head);
+                        mm(this, &mut ops, q_b, &s.out, 0, ql, &s.a, 0, hq, t, (0, 0));
+                        mm(
+                            this,
+                            &mut ops,
+                            k_b,
+                            &s.a,
+                            0,
+                            hq,
+                            &s.b,
+                            0,
+                            hl,
+                            t,
+                            (lora, hp.qk_head),
+                        );
+                        ops.push(Op {
+                            kernel: &this.e.b.mla,
+                            buffers: vec![&s.b, latents, &s.c, &s.iidx],
+                            constants: vec![
+                                lora as u32,
+                                f(1.0 / (hp.qk_head as f32).sqrt()),
+                                pos as u32,
+                                hp.indexer_top_k as u32,
+                                kpool as u32,
+                                hl as u32,
+                                hl as u32,
+                                idx_st as u32,
+                            ],
+                            groups: [(hp.heads / 16) as u32, tu, 1],
+                            independent: false,
+                        });
+                        mm(
+                            this,
+                            &mut ops,
+                            v_b,
+                            &s.c,
+                            0,
+                            hl,
+                            &s.out,
+                            0,
+                            hv,
+                            t,
+                            (hp.v_head, lora),
+                        );
+                        mm(this, &mut ops, out, &s.out, 0, hv, &s.a, 0, n, t, (0, 0));
                     }
-                    ops.push(Op {
-                        kernel: &this.e.b.combine,
-                        buffers: vec![&s.gd, &s.c, &s.routed, &s.lists],
-                        constants: vec![
-                            n as u32,
-                            used as u32,
-                            (t * n) as u32,
-                            e_count as u32,
-                            lp as u32,
-                        ],
-                        groups: grid((t * n).div_ceil(256)),
-                        independent: false,
-                    });
-                    next = (2, &s.a, n as u32, &s.c, n as u32);
                 }
+                let c = bmix(
+                    this,
+                    &hp,
+                    &mut ops,
+                    t,
+                    cur,
+                    &blk.ffn_mixer,
+                    (1, &s.a, n as u32, &s.zeros, 0),
+                );
+                cur = Some(c);
+                match &blk.ffn {
+                    Ffn::Dense { gu, down } => {
+                        let ffd = gu.rows / 2;
+                        mm(
+                            this,
+                            &mut ops,
+                            gu,
+                            &s.normed,
+                            0,
+                            n,
+                            &s.out,
+                            0,
+                            2 * ffd,
+                            t,
+                            (0, 0),
+                        );
+                        ops.push(Op {
+                            kernel: &this.e.glu,
+                            buffers: vec![&s.out, &s.b],
+                            constants: vec![ffd as u32, f(hp.clamp_shared[il]), tu],
+                            groups: grid((t * ffd).div_ceil(256)),
+                            independent: false,
+                        });
+                        mm(this, &mut ops, down, &s.b, 0, ffd, &s.a, 0, n, t, (0, 0));
+                        next = (1, &s.a, n as u32, &s.zeros, 0);
+                    }
+                    Ffn::Moe {
+                        router,
+                        bias,
+                        gu,
+                        down,
+                    } => {
+                        mm(
+                            this,
+                            &mut ops,
+                            router,
+                            &s.normed,
+                            0,
+                            n,
+                            &s.c,
+                            0,
+                            e_count,
+                            t,
+                            (0, 0),
+                        );
+                        ops.push(Op {
+                            kernel: &this.e.b.route,
+                            buffers: vec![&s.c, bias, &s.normed, this.route.buffer(), &s.routed],
+                            constants: vec![e_count as u32, used as u32, f(hp.expert_scale)],
+                            groups: [1, 1, tu],
+                            independent: false,
+                        });
+                        ops.push(Op {
+                            kernel: &this.e.b.group,
+                            buffers: vec![&s.routed, &s.lists, this.usage.buffer()],
+                            constants: vec![
+                                tu,
+                                used as u32,
+                                e_count as u32,
+                                (il * e_count) as u32,
+                                lp as u32,
+                            ],
+                            groups: [1, 1, 1],
+                            independent: false,
+                        });
+                        // The shared expert.
+                        let ffs = gu.rows / 2;
+                        mm(
+                            this,
+                            &mut ops,
+                            gu,
+                            &s.normed,
+                            0,
+                            n,
+                            &s.out,
+                            0,
+                            2 * ffs,
+                            t,
+                            (0, 0),
+                        );
+                        ops.push(Op {
+                            kernel: &this.e.glu,
+                            buffers: vec![&s.out, &s.b],
+                            constants: vec![ffs as u32, f(hp.clamp_shared[il]), tu],
+                            groups: grid((t * ffs).div_ceil(256)),
+                            independent: false,
+                        });
+                        mm(this, &mut ops, down, &s.b, 0, ffs, &s.a, 0, n, t, (0, 0));
+                        // The routed experts, from each source (disjoint outputs: no barriers
+                        // between sources).
+                        if this.experts[il].get().is_none() {
+                            // Loading on the way: the block's choice first (its router and
+                            // grouping run while the host reads the block's experts), then the
+                            // experts this batch chose most into the device's bank.
+                            let routed = submit(this, &mut ops)?;
+                            let t_join = std::time::Instant::now();
+                            let (raws, arena) = match prefetch.take() {
+                                Some((j, h)) if j == il => {
+                                    h.join().map_err(|_| "model_read_failed")??
+                                }
+                                other => {
+                                    if let Some((_, h)) = other {
+                                        let _ = h.join();
+                                    }
+                                    experts::prefetch_block(this.model, gpu, il, host)?
+                                }
+                            };
+                            let hp2 = &this.model.hp;
+                            if let Some(j) = (il + 1..hp2.layers)
+                                .find(|&j| j >= hp2.dense_lead && this.experts[j].get().is_none())
+                            {
+                                let model = this.model;
+                                prefetch = Some((
+                                    j,
+                                    sc.spawn(move || experts::prefetch_block(model, gpu, j, host)),
+                                ));
+                            }
+                            let join_s = t_join.elapsed().as_secs_f64();
+                            let t_route = std::time::Instant::now();
+                            routed.wait()?;
+                            let route_s = t_route.elapsed().as_secs_f64();
+                            let t_place = std::time::Instant::now();
+                            let mut c = vec![0f32; e_count];
+                            this.gpu
+                                .read_mapped(&this.usage, (il * e_count * 4) as u64, &mut c)?;
+                            let counts: Vec<u32> = c.iter().map(|v| v.to_bits()).collect();
+                            this.load_block(il, Some(&counts), Some(raws), Some(arena))?;
+                            if std::env::var_os("KUNO_GLM_TIMING").is_some() {
+                                eprintln!(
+                                    "block {il} loaded: waited {join_s:.2} s for its reads, {route_s:.2} s for its routing, placed in {:.2} s",
+                                    t_place.elapsed().as_secs_f64()
+                                );
+                            }
+                        }
+                        let ex = this.experts[il].get().ok_or("model_state_invalid")?;
+                        let (gk, dk) = (experts::kind(ex.gate_kind)?, experts::kind(ex.down_kind)?);
+                        let sources = this.sources(il, ex, piece_no);
+                        let k = (gk, dk, used, e_count, ff, t);
+                        let limit = hp.clamp_expert[il];
+                        let staged: Vec<&Source> =
+                            sources.iter().filter(|s| s.copy.is_some()).collect();
+                        let bank = sources.iter().find(|s| s.copy.is_none());
+                        if let (Some(copied), Some(consumed)) = (
+                            ring.then_some(()).and(this.copied.as_ref()),
+                            this.consumed.as_ref(),
+                        ) {
+                            // The side queue copies each piece into the ring once its buffer's
+                            // previous piece is used; the main queue runs each piece once it
+                            // is copied. Copies run ahead through attention and dense work.
+                            if let Some(b) = bank {
+                                ops.push(mec_op(this, b, 0, k, limit, false)?);
+                                ops.push(mec_op(this, b, 1, k, limit, false)?);
+                            }
+                            pending.push(submit(this, &mut ops)?);
+                            let depth = this.stage.len() as u64;
+                            for src in &staged {
+                                let g = piece_no;
+                                piece_no += 1;
+                                let c = src.copy.ok_or("model_state_invalid")?;
+                                let mut cops = vec![copy_op(this, c)];
+                                let waits: Vec<(&Timeline, u64)> = if g >= depth {
+                                    vec![(consumed, g - depth + 1)]
+                                } else {
+                                    Vec::new()
+                                };
+                                pending.push(submit_sync(
+                                    this,
+                                    &mut cops,
+                                    true,
+                                    &waits,
+                                    &[(copied, g + 1)],
+                                )?);
+                                ops.push(mec_op(this, src, 0, k, limit, false)?);
+                                ops.push(mec_op(this, src, 1, k, limit, false)?);
+                                pending.push(submit_sync(
+                                    this,
+                                    &mut ops,
+                                    false,
+                                    &[(copied, g + 1)],
+                                    &[(consumed, g + 1)],
+                                )?);
+                            }
+                        } else {
+                            // One queue: the bank's experts beside the first piece's copy; then
+                            // per piece its gate|up beside the next piece's copy, and its down.
+                            piece_no += staged.len() as u64;
+                            if let Some(c) = staged.first().and_then(|s| s.copy) {
+                                let mut op = copy_op(this, c);
+                                op.independent = bank.is_some();
+                                ops.push(op);
+                            }
+                            if let Some(b) = bank {
+                                ops.push(mec_op(this, b, 0, k, limit, false)?);
+                                ops.push(mec_op(this, b, 1, k, limit, false)?);
+                            }
+                            for (i, src) in staged.iter().enumerate() {
+                                let copy = staged.get(i + 1).and_then(|s| s.copy);
+                                ops.push(mec_op(this, src, 0, k, limit, copy.is_some())?);
+                                if let Some(c) = copy {
+                                    ops.push(copy_op(this, c));
+                                }
+                                ops.push(mec_op(this, src, 1, k, limit, false)?);
+                            }
+                        }
+                        ops.push(Op {
+                            kernel: &this.e.b.combine,
+                            buffers: vec![&s.gd, &s.c, &s.routed, &s.lists],
+                            constants: vec![
+                                n as u32,
+                                used as u32,
+                                (t * n) as u32,
+                                e_count as u32,
+                                lp as u32,
+                            ],
+                            groups: grid((t * n).div_ceil(256)),
+                            independent: false,
+                        });
+                        next = (2, &s.a, n as u32, &s.c, n as u32);
+                    }
+                }
+                pending.push(submit(this, &mut ops)?);
             }
-            pending.push(submit(this, &mut ops)?);
-        }
+            if let Some((_, h)) = prefetch {
+                let _ = h.join();
+            }
+            Ok(())
+        })?;
         // The last block's FFN mixer, then the last token's norm, head and choice.
         let c = bmix(this, &hp, &mut ops, t, cur, &this.blocks[0].attn, next);
         if this.trace.is_some() {
@@ -676,6 +816,8 @@ impl<'m> Engine<'m> {
         last.wait()?;
         let mut tok = [0f32; 1];
         this.gpu.read_mapped(&this.token, 0, &mut tok)?;
+        this.streamed
+            .store(piece_no, std::sync::atomic::Ordering::Relaxed);
         drop(ops);
         // The batch's choices into the banks' scores.
         let e = hp.experts;
@@ -683,7 +825,7 @@ impl<'m> Engine<'m> {
         self.gpu.read_mapped(&self.usage, 0, &mut counts)?;
         let last = (self.pos + t - 1) as u64;
         for (il, ex) in self.experts.iter().enumerate() {
-            if let Some(ex) = ex {
+            if let Some(ex) = ex.get() {
                 let c: Vec<u32> = counts[il * e..][..e].iter().map(|v| v.to_bits()).collect();
                 ex.add_batch(&c, last, t);
             }
@@ -979,5 +1121,206 @@ mod tests {
             );
             assert!(worst.0 <= 1e-2 * scale, "{name}");
         }
+    }
+}
+
+#[cfg(test)]
+mod kernel_tests {
+    use kuno_image::engine::gpu::{Buffer, Gpu, Kernel, Select, Step, bytes_of};
+
+    use crate::gpu::filled;
+
+    fn gpu() -> Gpu {
+        let pci = std::env::var("KUNO_GLM_GPU").unwrap_or_else(|_| "0000:2d:00.0".into());
+        Gpu::open(Select::Pci(pci)).unwrap()
+    }
+    fn noise(n: usize, seed: usize, scale: f32) -> Vec<f32> {
+        (0..n)
+            .map(|i| {
+                let x = (i.wrapping_mul(2654435761).wrapping_add(seed * 97)) % 10007;
+                (x as f32 / 10007.0 - 0.5) * scale
+            })
+            .collect()
+    }
+    fn read(gpu: &Gpu, b: &Buffer, n: usize) -> Vec<f32> {
+        let stage = gpu.readback((n * 4) as u64).unwrap();
+        let mut v = vec![0f32; n];
+        gpu.read_floats(b, 0, &stage, &mut v).unwrap();
+        v
+    }
+    fn run(gpu: &Gpu, k: &Kernel, b: &[&Buffer], c: &[u32], groups: [u32; 3]) {
+        gpu.pass(&[Step {
+            kernel: k,
+            buffers: b,
+            constants: c,
+            groups,
+        }])
+        .unwrap();
+    }
+    fn worst(a: &[f32], b: &[f32]) -> f32 {
+        let scale = b.iter().map(|v| v.abs()).fold(0f32, f32::max).max(1e-9);
+        a.iter()
+            .zip(b)
+            .map(|(x, y)| (x - y).abs())
+            .fold(0f32, f32::max)
+            / scale
+    }
+
+    /// kdab.comp's batch against kda.comp one token at a time (same inputs and state).
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn batched_kda_matches_steps() {
+        let gpu = gpu();
+        let (heads, t) = (64usize, 37usize);
+        let d = heads * 128;
+        let kda = gpu
+            .kernel(include_bytes!("../../shaders/kda.spv"), 8, 4, Some(16))
+            .unwrap();
+        let kdab = gpu
+            .kernel(include_bytes!("../../shaders/kdab.spv"), 8, 9, Some(16))
+            .unwrap();
+        let (sr, braw_off) = (320usize, 256usize);
+        let qkv = noise(t * 3 * d, 1, 2.0);
+        let fg = noise(t * 2 * d, 2, 3.0);
+        let braw = noise(t * sr, 3, 2.0);
+        let conv = noise(3 * d * 4, 4, 1.0);
+        let mut params = noise(64, 5, 1.0);
+        params.extend(noise(128, 6, 2.0));
+        params.extend(noise(d, 7, 1.0));
+        let state0 = noise(heads * 128 * 128, 8, 0.2);
+        let hist0 = noise(9 * d, 9, 1.0);
+        let (lower, eps) = (-5f32, 1e-5f32);
+        let conv_b = filled(&gpu, bytes_of(&conv)).unwrap();
+        let params_b = filled(&gpu, bytes_of(&params)).unwrap();
+        // Batched.
+        let (hist, state) = (
+            filled(&gpu, bytes_of(&hist0)).unwrap(),
+            filled(&gpu, bytes_of(&state0)).unwrap(),
+        );
+        let (qb, fb, bb) = (
+            filled(&gpu, bytes_of(&qkv)).unwrap(),
+            filled(&gpu, bytes_of(&fg)).unwrap(),
+            filled(&gpu, bytes_of(&braw)).unwrap(),
+        );
+        let out = gpu.buffer((t * d * 4) as u64).unwrap();
+        run(
+            &gpu,
+            &kdab,
+            &[&qb, &conv_b, &hist, &fb, &bb, &params_b, &state, &out],
+            &[
+                d as u32,
+                lower.to_bits(),
+                eps.to_bits(),
+                braw_off as u32,
+                t as u32,
+                (3 * d) as u32,
+                (2 * d) as u32,
+                sr as u32,
+                d as u32,
+            ],
+            [heads as u32, 1, 1],
+        );
+        let got = read(&gpu, &out, t * d);
+        let got_state = read(&gpu, &state, heads * 128 * 128);
+        // Steps.
+        let (hist, state) = (
+            filled(&gpu, bytes_of(&hist0)).unwrap(),
+            filled(&gpu, bytes_of(&state0)).unwrap(),
+        );
+        let mut want = Vec::new();
+        for i in 0..t {
+            let q1 = filled(&gpu, bytes_of(&qkv[i * 3 * d..][..3 * d])).unwrap();
+            let f1 = filled(&gpu, bytes_of(&fg[i * 2 * d..][..2 * d])).unwrap();
+            let b1 = filled(&gpu, bytes_of(&braw[i * sr..][..sr])).unwrap();
+            let o1 = gpu.buffer((d * 4) as u64).unwrap();
+            run(
+                &gpu,
+                &kda,
+                &[&q1, &conv_b, &hist, &f1, &b1, &params_b, &state, &o1],
+                &[d as u32, lower.to_bits(), eps.to_bits(), braw_off as u32],
+                [heads as u32, 1, 1],
+            );
+            want.extend(read(&gpu, &o1, d));
+        }
+        let want_state = read(&gpu, &state, heads * 128 * 128);
+        let (wo, ws) = (worst(&got, &want), worst(&got_state, &want_state));
+        eprintln!("kda batched vs steps: outputs {wo:.2e}, state {ws:.2e}");
+        assert!(wo < 1e-4 && ws < 1e-4);
+    }
+
+    /// mlab.comp's batch against mla.comp one token at a time, causal and indexed (a small
+    /// top_k so tokens past it are indexed).
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn batched_attention_matches_steps() {
+        let gpu = gpu();
+        let (heads, lora, t, pos) = (64usize, 512usize, 40usize, 3usize);
+        let (top_k, kpool) = (16usize, 4usize);
+        let mla = gpu
+            .kernel(include_bytes!("../../shaders/mla.spv"), 4, 4, Some(16))
+            .unwrap();
+        let mlab = gpu
+            .kernel(include_bytes!("../../shaders/mlab.spv"), 4, 8, Some(16))
+            .unwrap();
+        let positions = pos + t;
+        let q = noise(t * heads * lora, 11, 0.5);
+        let lat = noise(positions * lora, 12, 1.0);
+        let idx_st = top_k + kpool;
+        // Each token's choice: some earlier positions, any order (as the indexer's).
+        let mut idx = vec![0u32; t * idx_st];
+        for i in 0..t {
+            let p = pos + i;
+            for k in 0..idx_st {
+                idx[i * idx_st + k] = ((k * 7 + i * 3) % (p + 1)) as u32;
+            }
+        }
+        let scale = 1.0f32 / 16.0;
+        let qb = filled(&gpu, bytes_of(&q)).unwrap();
+        let lb = filled(&gpu, bytes_of(&lat)).unwrap();
+        let ib = filled(&gpu, bytes_of(&idx)).unwrap();
+        let out = gpu.buffer((t * heads * lora * 4) as u64).unwrap();
+        let hl = (heads * lora) as u32;
+        run(
+            &gpu,
+            &mlab,
+            &[&qb, &lb, &out, &ib],
+            &[
+                lora as u32,
+                scale.to_bits(),
+                pos as u32,
+                top_k as u32,
+                kpool as u32,
+                hl,
+                hl,
+                idx_st as u32,
+            ],
+            [(heads / 16) as u32, t as u32, 1],
+        );
+        let got = read(&gpu, &out, t * heads * lora);
+        let mut want = Vec::new();
+        for i in 0..t {
+            let p = pos + i;
+            let pools = (p + 1) / kpool;
+            let indexed = pools > top_k / kpool;
+            let count = if indexed {
+                top_k + (p + 1 - pools * kpool)
+            } else {
+                p + 1
+            };
+            let q1 = filled(&gpu, bytes_of(&q[i * heads * lora..][..heads * lora])).unwrap();
+            let i1 = filled(&gpu, bytes_of(&idx[i * idx_st..][..idx_st])).unwrap();
+            let o1 = gpu.buffer((heads * lora * 4) as u64).unwrap();
+            run(
+                &gpu,
+                &mla,
+                &[&q1, &lb, &o1, &i1],
+                &[lora as u32, count as u32, scale.to_bits(), indexed as u32],
+                [heads as u32, 1, 1],
+            );
+            want.extend(read(&gpu, &o1, heads * lora));
+        }
+        let w = worst(&got, &want);
+        eprintln!("attention batched vs steps: {w:.2e}");
+        assert!(w < 1e-4);
     }
 }

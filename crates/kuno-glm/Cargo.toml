@@ -23,3 +23,7 @@ required-features = ["gpu"]
 [[example]]
 name = "hostmem"
 required-features = ["gpu"]
+
+[[example]]
+name = "loadbench"
+required-features = ["gpu"]

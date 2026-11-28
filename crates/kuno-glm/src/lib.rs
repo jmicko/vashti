@@ -193,6 +193,53 @@ impl Model {
         view.read_range((first * row_bytes) as u64, out)
             .map_err(|_| "model_read_failed")
     }
+    /// A reader for bulk loads: positional reads (no shared file position, so threads read
+    /// in parallel) that bypass the page cache when the model is larger than free memory.
+    pub fn reader(&self) -> Result<kuno_text::gguf::PositionalReader<'_>> {
+        self.gguf
+            .positional_reader()
+            .map_err(|_| "model_read_failed")
+    }
+    /// `read_rows` through `reader`.
+    pub fn read_rows_with(
+        &self,
+        reader: &kuno_text::gguf::PositionalReader<'_>,
+        name: &str,
+        first: usize,
+        out: &mut [u8],
+    ) -> Result<()> {
+        let view = self.gguf.tensor(name).ok_or("model_tensor_missing")?;
+        let row_bytes = view.info().row_bytes() as usize;
+        reader
+            .read_range_direct(view, (first * row_bytes) as u64, out)
+            .map_err(|_| "model_read_failed")
+    }
+    /// `matrix` through `reader`.
+    pub fn matrix_with(
+        &self,
+        reader: &kuno_text::gguf::PositionalReader<'_>,
+        name: &str,
+    ) -> Result<Matrix> {
+        use rayon::prelude::*;
+        let view = self.gguf.tensor(name).ok_or("model_tensor_missing")?;
+        let info = view.info();
+        let mut bytes = vec![0u8; info.byte_len() as usize];
+        // In 4 MiB pieces read in parallel (one stream reads at about a third of the disk's
+        // speed).
+        const PIECE: usize = 4 << 20;
+        bytes
+            .par_chunks_mut(PIECE)
+            .enumerate()
+            .try_for_each(|(i, out)| reader.read_range_direct(view, (i * PIECE) as u64, out))
+            .map_err(|_| "model_read_failed")?;
+        Ok(Matrix {
+            dtype: info.dtype(),
+            rows: info.row_count() as usize,
+            cols: info.row_len() as usize,
+            row_bytes: info.row_bytes() as usize,
+            bytes,
+        })
+    }
     /// A weight's type and packed bytes per row.
     pub fn layout(&self, name: &str) -> Result<(TensorType, usize, usize)> {
         let view = self.gguf.tensor(name).ok_or("model_tensor_missing")?;

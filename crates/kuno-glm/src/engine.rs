@@ -148,7 +148,11 @@ pub struct Engine<'m> {
     k: Kernels,
     e: Extra,
     blocks: Vec<Block>,
-    experts: Vec<Option<BlockExperts>>,
+    /// Per block its experts, once loaded: up front with a second device, else on the way
+    /// (a prompt's batch loads each block as it reaches it; `load_all` the rest).
+    experts: Vec<std::sync::OnceLock<BlockExperts>>,
+    /// Device bank slots per block (for blocks loaded later).
+    slots1: usize,
     second: Option<crate::second::Second>,
     out_norm: Buffer,
     output: Mat,
@@ -172,6 +176,12 @@ pub struct Engine<'m> {
     /// each; empty without batching).
     stage: Vec<Buffer>,
     piece: usize,
+    /// With a side queue: the staging buffers are a ring the side queue fills ahead of the
+    /// main queue; `copied` counts pieces copied, `consumed` pieces used, `streamed` pieces
+    /// so far (the timelines' next values).
+    copied: Option<kuno_image::engine::gpu::Timeline>,
+    consumed: Option<kuno_image::engine::gpu::Timeline>,
+    streamed: std::sync::atomic::AtomicU64,
     /// When set, the mean of the streams after each block (comparison with the reference).
     pub trace: Option<Vec<Vec<f32>>>,
     /// Staged slot maps for trades, and this token's trades.
@@ -230,6 +240,7 @@ impl<'m> Engine<'m> {
         max_positions: usize,
     ) -> Result<Self> {
         let hp = &model.hp;
+        let loading = std::time::Instant::now();
         let k = Kernels::new(&gpu)?;
         let lanes = Some(k.lanes);
         let kernel = |spirv: &[u8], b, c| gpu.kernel(spirv, b, c, lanes);
@@ -260,7 +271,7 @@ impl<'m> Engine<'m> {
             b: Batched {
                 hcdot: kernel(include_bytes!("../shaders/hcdot_b.spv"), 9, 6)?,
                 hcmix: kernel(include_bytes!("../shaders/hcmix_b.spv"), 6, 5)?,
-                kda: kernel(include_bytes!("../shaders/kda_b.spv"), 8, 9)?,
+                kda: kernel(include_bytes!("../shaders/kdab.spv"), 8, 9)?,
                 dsanorm: kernel(include_bytes!("../shaders/dsanorm_b.spv"), 4, 6)?,
                 idxstore: kernel(include_bytes!("../shaders/idxstore_b.spv"), 4, 4)?,
                 idxscore: kernel(include_bytes!("../shaders/idxscore_b.spv"), 4, 8)?,
@@ -284,8 +295,32 @@ impl<'m> Engine<'m> {
             },
         };
 
-        let m = |n: &str| model.matrix(n);
-        let v = |n: &str| model.vector(n);
+        let reader = model.reader()?;
+        // Every weight but the experts (and the unused NextN block) read up front, in
+        // parallel at the disk's speed, then taken as the blocks are built.
+        let pre: std::sync::Mutex<std::collections::HashMap<String, Matrix>> = {
+            use rayon::prelude::*;
+            let skip = format!("blk.{}.", hp.layers);
+            let names: Vec<&String> = model
+                .gguf
+                .tensors()
+                .keys()
+                .filter(|n| !n.contains("_exps") && !n.starts_with(&skip))
+                .collect();
+            let read: Result<std::collections::HashMap<String, Matrix>> = names
+                .par_iter()
+                .map(|n| Ok(((*n).clone(), model.matrix_with(&reader, n)?)))
+                .collect();
+            std::sync::Mutex::new(read?)
+        };
+        eprintln!("weights read ({:.1} s)", loading.elapsed().as_secs_f64());
+        let m = |n: &str| -> Result<Matrix> {
+            match pre.lock().map_err(|_| "model_read_failed")?.remove(n) {
+                Some(x) => Ok(x),
+                None => model.matrix_with(&reader, n),
+            }
+        };
+        let v = |n: &str| m(n)?.decode_all();
         let up = |mx: &Matrix| Mat::upload(&gpu, mx);
         let mut blocks = Vec::with_capacity(hp.layers);
         for il in 0..hp.layers {
@@ -383,7 +418,10 @@ impl<'m> Engine<'m> {
                 attention,
                 ffn,
             });
-            eprintln!("block {il} on the device");
+            eprintln!(
+                "block {il} on the device ({:.1} s)",
+                loading.elapsed().as_secs_f64()
+            );
         }
         let n = hp.embd;
         // KUNO_GLM_BATCH: tokens per batch of a prompt (default 2048, ~1 MB of device scratch
@@ -437,7 +475,18 @@ impl<'m> Engine<'m> {
                 let (_, dr, _) = model.layout(&name("down"))?;
                 slot_bytes = slot_bytes.max((2 * hp.ff_expert * gr + n * dr) as u64);
             }
-            for _ in 0..2 {
+            // KUNO_GLM_RING staging buffers with a side queue (default 6: ~1.3 GB, about what
+            // streams while a block's attention and dense products run), else two.
+            let ring: usize = if gpu.has_side() {
+                std::env::var("KUNO_GLM_RING")
+                    .ok()
+                    .and_then(|v| v.parse().ok())
+                    .unwrap_or(6usize)
+                    .max(2)
+            } else {
+                2
+            };
+            for _ in 0..ring {
                 stage.push(gpu.buffer(piece as u64 * slot_bytes)?);
             }
         }
@@ -467,12 +516,35 @@ impl<'m> Engine<'m> {
                         .saturating_sub(3 * margin / 2)
                 })
         });
-        let experts = experts::place(
-            model,
-            &gpu,
-            budget,
-            second.as_ref().map(|s| (&s.gpu, budget2.unwrap_or(0))),
-        )?;
+        // KUNO_GLM_LAZY=0 (or a second device, or KUNO_GLM_NO_HOST): every block's experts
+        // now; else each when first needed.
+        let lazy = second.is_none()
+            && std::env::var_os("KUNO_GLM_NO_HOST").is_none()
+            && !std::env::var("KUNO_GLM_LAZY").is_ok_and(|v| v == "0");
+        let (slots1, _, per_slot) = experts::plan(model, budget, None)?;
+        let experts: Vec<std::sync::OnceLock<BlockExperts>> = if lazy {
+            eprintln!(
+                "experts: {slots1} slots per block on the device ({:.1} GB), loaded on the way",
+                (slots1 as u64 * per_slot) as f64 / 1e9
+            );
+            (0..hp.layers).map(|_| std::sync::OnceLock::new()).collect()
+        } else {
+            experts::place(
+                model,
+                &gpu,
+                budget,
+                second.as_ref().map(|s| (&s.gpu, budget2.unwrap_or(0))),
+            )?
+            .into_iter()
+            .map(|b| {
+                let c = std::sync::OnceLock::new();
+                if let Some(b) = b {
+                    let _ = c.set(b);
+                }
+                c
+            })
+            .collect()
+        };
         // Trades per token (KUNO_GLM_TRADES, default one per block): each a staged slot map.
         let trade_stage = {
             let count = std::env::var("KUNO_GLM_TRADES")
@@ -480,7 +552,7 @@ impl<'m> Engine<'m> {
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(hp.layers);
             let mut v = Vec::new();
-            if experts.iter().flatten().any(|b| b.device.is_some()) {
+            if slots1 > 0 {
                 for _ in 0..count {
                     v.push(gpu.mapped((hp.experts * 4) as u64)?);
                 }
@@ -491,12 +563,24 @@ impl<'m> Engine<'m> {
             out_norm: floats(&gpu, &v("output_norm.weight")?)?,
             output,
             experts,
+            slots1,
             second,
             embed: m("token_embd.weight")?,
             host_x: gpu.mapped((4 * n * 4 * batch) as u64)?,
             order: gpu.mapped((hp.layers * 2 * hp.experts * 4) as u64)?,
             usage: gpu.mapped((hp.layers * hp.experts * 4) as u64)?,
             batch,
+            copied: if gpu.has_side() {
+                Some(gpu.timeline()?)
+            } else {
+                None
+            },
+            consumed: if gpu.has_side() {
+                Some(gpu.timeline()?)
+            } else {
+                None
+            },
+            streamed: std::sync::atomic::AtomicU64::new(0),
             stage,
             piece,
             route: gpu.mapped(((2 * hp.experts_used + n + 4) * 4) as u64)?,
@@ -520,6 +604,7 @@ impl<'m> Engine<'m> {
 
     /// Runs `token` at the next position; returns the most likely next token.
     pub fn step(&mut self, token: u32) -> Result<u32> {
+        self.load_all()?;
         let hp = self.model.hp.clone();
         let n = hp.embd;
         if self.pos >= self.max_positions {
@@ -901,7 +986,7 @@ impl<'m> Engine<'m> {
                         down.constants(0, 0, false),
                         false,
                     );
-                    let ex = this.experts[il].as_ref().ok_or("model_state_invalid")?;
+                    let ex = this.experts[il].get().ok_or("model_state_invalid")?;
                     if let Some(pool) = &ex.device {
                         let (ff, used) = (hp.ff_expert, hp.experts_used);
                         let rpg = 128 / this.k.lanes;
@@ -960,7 +1045,7 @@ impl<'m> Engine<'m> {
                         this.cpu_experts(il, ex)?
                     };
                     timing[1] += t.elapsed().as_secs_f64();
-                    if let Some(ex) = &this.experts[il] {
+                    if let Some(ex) = this.experts[il].get() {
                         let mut r = vec![0f32; hp.experts_used];
                         this.gpu.read_mapped(&this.route, 0, &mut r)?;
                         timing[2] += r
@@ -1044,6 +1129,72 @@ impl<'m> Engine<'m> {
         }
         self.pos += 1;
         Ok(t[0].to_bits())
+    }
+
+    /// A reader for loading experts.
+    fn reader(&self) -> Result<experts::Reader<'m>> {
+        self.model.reader()
+    }
+
+    /// Loads every block's experts not loaded yet (the bank by recent use where a prompt
+    /// counted it, else in index order). Callers may run it while idle.
+    pub fn load_all(&self) -> Result<()> {
+        let hp = &self.model.hp;
+        if (hp.dense_lead..hp.layers).all(|il| self.experts[il].get().is_some()) {
+            return Ok(());
+        }
+        // Each block read by threads of its own while the one before is placed.
+        let todo: Vec<usize> = (hp.dense_lead..hp.layers)
+            .filter(|&il| self.experts[il].get().is_none())
+            .collect();
+        let model = self.model;
+        std::thread::scope(|sc| -> Result<()> {
+            let first = todo[0];
+            let host = self.model.hp.experts - self.slots1;
+            let gpu = &self.gpu;
+            let mut next = Some(sc.spawn(move || experts::prefetch_block(model, gpu, first, host)));
+            for (i, &il) in todo.iter().enumerate() {
+                let (raws, arena) = next
+                    .take()
+                    .ok_or("model_read_failed")?
+                    .join()
+                    .map_err(|_| "model_read_failed")??;
+                if let Some(&j) = todo.get(i + 1) {
+                    next = Some(sc.spawn(move || experts::prefetch_block(model, gpu, j, host)));
+                }
+                self.load_block(il, None, Some(raws), Some(arena))?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Places block `il`'s experts from `raws` (every expert's raw rows): the bank takes
+    /// the experts `counts` chose most (ties and the rest in index order).
+    fn load_block(
+        &self,
+        il: usize,
+        counts: Option<&[u32]>,
+        raws: Option<Vec<Vec<u8>>>,
+        arena: Option<Vec<Mapped>>,
+    ) -> Result<()> {
+        let e = self.model.hp.experts;
+        let mut ids: Vec<usize> = (0..e).collect();
+        if let Some(c) = counts {
+            ids.sort_by(|a, b| c[*b].cmp(&c[*a]).then(a.cmp(b)));
+        }
+        let bank = &ids[..self.slots1.min(e)];
+        let reader = self.reader()?;
+        let got = |x: usize| -> Result<std::borrow::Cow<'_, [u8]>> {
+            match &raws {
+                Some(r) => Ok(std::borrow::Cow::Borrowed(&r[x][..])),
+                None => {
+                    experts::read_expert(self.model, &reader, il, x).map(std::borrow::Cow::Owned)
+                }
+            }
+        };
+        let block = experts::place_block(self.model, &self.gpu, il, bank, None, &got, arena)?;
+        let _ = self.experts[il].set(block);
+        self.write_order_block(il)
     }
 
     /// Plans block `il`'s trade for this token's choice and submits its copies (victim down
@@ -1140,7 +1291,7 @@ impl<'m> Engine<'m> {
         let trades = std::mem::take(&mut *self.trades.lock().map_err(|_| "gpu_failed")?);
         for t in &trades {
             self.experts[t.block]
-                .as_mut()
+                .get_mut()
                 .ok_or("model_state_invalid")?
                 .settle(t);
         }

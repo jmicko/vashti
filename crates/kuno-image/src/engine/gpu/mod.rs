@@ -69,6 +69,10 @@ struct Core {
     /// time), on GPUs other than Intel's that have one: copies there run beside compute.
     /// Buffers are then shared by both families (`families`).
     transfer: Option<(u32, vk::Queue, vk::CommandPool, std::sync::Mutex<()>)>,
+    /// A second compute queue (`Gpu::open_side`: its family, queue and command pool, used
+    /// under `turn`), so streaming copies run beside the main queue's work; the two order
+    /// each other with `Timeline`s.
+    side: Option<(u32, vk::Queue, vk::CommandPool)>,
     families: Vec<u32>,
     /// Unsignaled fences for reuse: creating one costs about 250 us on NVIDIA's driver,
     /// far more than the submission it guards.
@@ -113,6 +117,9 @@ impl Drop for Core {
                 }
             }
             if let Some((_, _, pool, _)) = &self.transfer {
+                self.device.destroy_command_pool(*pool, None);
+            }
+            if let Some((_, _, pool)) = &self.side {
                 self.device.destroy_command_pool(*pool, None);
             }
             self.device.destroy_descriptor_pool(self.descriptors, None);
@@ -180,6 +187,35 @@ pub struct Passing {
         vk::Fence,
         Vec<vk::DescriptorSet>,
     )>,
+    /// The command pool its buffer came from (the side queue's, or the main one).
+    pool: Option<vk::CommandPool>,
+}
+/// A timeline semaphore (`Gpu::timeline`): passes wait for and signal its values.
+pub struct Timeline {
+    core: Arc<Core>,
+    semaphore: vk::Semaphore,
+}
+impl Timeline {
+    /// Its current value.
+    pub fn value(&self) -> Result<u64, &'static str> {
+        // SAFETY: the semaphore is alive.
+        unsafe {
+            check(
+                self.core.device.get_semaphore_counter_value(self.semaphore),
+                "gpu_failed",
+            )
+        }
+    }
+}
+impl Drop for Timeline {
+    fn drop(&mut self) {
+        // SAFETY: the owner drops it only after the passes using it completed (every
+        // `Passing` waits on drop); the device waits idle first in any case.
+        unsafe {
+            let _ = self.core.device.device_wait_idle();
+            self.core.device.destroy_semaphore(self.semaphore, None);
+        }
+    }
 }
 impl Passing {
     /// Waits for the pass.
@@ -203,7 +239,8 @@ impl Passing {
                 core.device.destroy_fence(fence, None);
             }
             let _turn = core.turn.lock();
-            core.device.free_command_buffers(core.pool, &[commands]);
+            core.device
+                .free_command_buffers(self.pool.unwrap_or(core.pool), &[commands]);
             if !sets.is_empty() {
                 let _ = core.device.free_descriptor_sets(core.descriptors, &sets);
             }
@@ -311,6 +348,14 @@ fn check<T>(result: Result<T, vk::Result>, code: &'static str) -> Result<T, &'st
 }
 impl Gpu {
     pub fn open(select: Select) -> Result<Self, &'static str> {
+        Self::open_with(select, false)
+    }
+    /// `open`, with a second compute queue when the device has one in another family
+    /// (`pass_sync`); the device's buffers are then shared by both families.
+    pub fn open_side(select: Select) -> Result<Self, &'static str> {
+        Self::open_with(select, true)
+    }
+    fn open_with(select: Select, want_side: bool) -> Result<Self, &'static str> {
         // SAFETY: plain Vulkan setup; every handle is destroyed in `Core::drop`, and the
         // feature structures outlive the calls that read them.
         unsafe {
@@ -374,11 +419,32 @@ impl Gpu {
                         .map(|f| f as u32)
                 })
                 .flatten();
+            let side_family = want_side
+                .then(|| {
+                    instance
+                        .get_physical_device_queue_family_properties(physical)
+                        .iter()
+                        .enumerate()
+                        .position(|(i, q)| {
+                            i as u32 != family
+                                && Some(i as u32) != copy_family
+                                && q.queue_flags.contains(vk::QueueFlags::COMPUTE)
+                        })
+                        .map(|f| f as u32)
+                })
+                .flatten();
             let mut queues = vec![
                 vk::DeviceQueueCreateInfo::default()
                     .queue_family_index(family)
                     .queue_priorities(&[1.0]),
             ];
+            if let Some(side) = side_family {
+                queues.push(
+                    vk::DeviceQueueCreateInfo::default()
+                        .queue_family_index(side)
+                        .queue_priorities(&[1.0]),
+                );
+            }
             if let Some(copy) = copy_family {
                 queues.push(
                     vk::DeviceQueueCreateInfo::default()
@@ -449,6 +515,7 @@ impl Gpu {
             let mut v12 = vk::PhysicalDeviceVulkan12Features::default()
                 .shader_float16(true)
                 .shader_int8(true)
+                .timeline_semaphore(true)
                 .vulkan_memory_model(true);
             let mut v13 = vk::PhysicalDeviceVulkan13Features::default()
                 .subgroup_size_control(true)
@@ -496,9 +563,27 @@ impl Gpu {
                 )),
                 None => None,
             };
-            let families = match copy_family {
+            let mut families = match copy_family {
                 Some(copy) => vec![family, copy],
                 None => vec![family],
+            };
+            let side = match side_family {
+                Some(f) => {
+                    families.push(f);
+                    Some((
+                        f,
+                        device.get_device_queue(f, 0),
+                        device
+                            .create_command_pool(
+                                &vk::CommandPoolCreateInfo::default()
+                                    .queue_family_index(f)
+                                    .flags(vk::CommandPoolCreateFlags::RESET_COMMAND_BUFFER),
+                                None,
+                            )
+                            .map_err(|_| "gpu_unavailable")?,
+                    ))
+                }
+                None => None,
             };
             let pool = device
                 .create_command_pool(
@@ -558,6 +643,7 @@ impl Gpu {
                     subgroups,
                     matrix2: matrix2_ok,
                     transfer,
+                    side,
                     families,
                     turn: std::sync::Mutex::new(()),
                     fences: std::sync::Mutex::new(Vec::new()),
@@ -1372,6 +1458,118 @@ impl Gpu {
             .map(|w| w[1].saturating_sub(w[0]) as f64 * f64::from(period))
             .collect())
     }
+    /// Whether `open_side` found a second compute queue.
+    pub fn has_side(&self) -> bool {
+        self.core.side.is_some()
+    }
+    /// A timeline semaphore starting at 0.
+    pub fn timeline(&self) -> Result<Timeline, &'static str> {
+        let mut kind = vk::SemaphoreTypeCreateInfo::default()
+            .semaphore_type(vk::SemaphoreType::TIMELINE)
+            .initial_value(0);
+        // SAFETY: the semaphore is owned by the returned `Timeline`.
+        let semaphore = unsafe {
+            self.core.device.create_semaphore(
+                &vk::SemaphoreCreateInfo::default().push_next(&mut kind),
+                None,
+            )
+        };
+        Ok(Timeline {
+            core: self.core.clone(),
+            semaphore: check(semaphore, "gpu_failed")?,
+        })
+    }
+    /// `pass_begin` on the main queue (or the side queue, `side`), starting once every
+    /// `waits` timeline reaches its value and setting each `signals` timeline to its value
+    /// when done.
+    ///
+    /// # Safety
+    ///
+    /// As `pass_begin`; also the timelines outlive the pass.
+    pub unsafe fn pass_sync(
+        &self,
+        side: bool,
+        steps: &[Step],
+        independent: &[bool],
+        waits: &[(&Timeline, u64)],
+        signals: &[(&Timeline, u64)],
+    ) -> Result<Passing, &'static str> {
+        let core = &self.core;
+        let (queue, pool) = match (side, &core.side) {
+            (false, _) => (core.queue, core.pool),
+            (true, Some((_, q, p))) => (*q, *p),
+            (true, None) => return Err("gpu_unsupported"),
+        };
+        let _turn = core.turn.lock().map_err(|_| "gpu_failed")?;
+        let mut sets = Vec::with_capacity(steps.len());
+        let free = |sets: &[vk::DescriptorSet]| {
+            if !sets.is_empty() {
+                // SAFETY: nothing was submitted with these sets.
+                unsafe {
+                    let _ = core.device.free_descriptor_sets(core.descriptors, sets);
+                }
+            }
+        };
+        if let Err(e) = self.sets_for(steps, &mut sets) {
+            free(&sets);
+            return Err(e);
+        }
+        let wait_sems: Vec<vk::Semaphore> = waits.iter().map(|w| w.0.semaphore).collect();
+        let wait_values: Vec<u64> = waits.iter().map(|w| w.1).collect();
+        let wait_stages = vec![vk::PipelineStageFlags::COMPUTE_SHADER; waits.len()];
+        let signal_sems: Vec<vk::Semaphore> = signals.iter().map(|w| w.0.semaphore).collect();
+        let signal_values: Vec<u64> = signals.iter().map(|w| w.1).collect();
+        // SAFETY: as `pass_begin`; the semaphores are alive (the caller's contract).
+        unsafe {
+            let commands = match core.device.allocate_command_buffers(
+                &vk::CommandBufferAllocateInfo::default()
+                    .command_pool(pool)
+                    .command_buffer_count(1),
+            ) {
+                Ok(c) => c[0],
+                Err(_) => {
+                    free(&sets);
+                    return Err("gpu_failed");
+                }
+            };
+            let submitted = (|| {
+                core.device.begin_command_buffer(
+                    commands,
+                    &vk::CommandBufferBeginInfo::default()
+                        .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT),
+                )?;
+                record_steps(&core.device, commands, steps, &sets, independent, true);
+                core.device.end_command_buffer(commands)?;
+                let fence = core.fence()?;
+                let one = [commands];
+                let mut values = vk::TimelineSemaphoreSubmitInfo::default()
+                    .wait_semaphore_values(&wait_values)
+                    .signal_semaphore_values(&signal_values);
+                let info = vk::SubmitInfo::default()
+                    .command_buffers(&one)
+                    .wait_semaphores(&wait_sems)
+                    .wait_dst_stage_mask(&wait_stages)
+                    .signal_semaphores(&signal_sems)
+                    .push_next(&mut values);
+                if let Err(e) = core.device.queue_submit(queue, &[info], fence) {
+                    core.recycle(fence);
+                    return Err(e);
+                }
+                Ok(fence)
+            })();
+            match submitted {
+                Ok(fence) => Ok(Passing {
+                    pending: Some((core.clone(), commands, fence, sets)),
+                    pool: Some(pool),
+                }),
+                Err(_) => {
+                    core.device.free_command_buffers(pool, &[commands]);
+                    free(&sets);
+                    Err("gpu_failed")
+                }
+            }
+        }
+    }
     /// `pass_with` without waiting for the device: the pass is submitted and `Passing`
     /// waits for it (`wait`, or when dropped). Passes run in submission order, each after
     /// the writes of those before it; writes the host makes to mapped buffers before this
@@ -1438,6 +1636,7 @@ impl Gpu {
             match submitted {
                 Ok(fence) => Ok(Passing {
                     pending: Some((core.clone(), commands, fence, sets)),
+                    pool: None,
                 }),
                 Err(_) => {
                     core.device.free_command_buffers(core.pool, &[commands]);

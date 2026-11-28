@@ -24,9 +24,17 @@ impl Kernels {
 
 /// A device buffer holding `bytes`, read back and compared before use: on the RTX 3060
 /// uploads occasionally arrive with whole 64 KiB pages wrong (see kuno-audio). A mismatch is
-/// uploaded again, up to three times.
+/// uploaded again, up to three times. Intel's devices take uploads unchecked (the fault is
+/// NVIDIA's; checking doubles the bus traffic of a load).
 pub fn filled(gpu: &Gpu, bytes: &[u8]) -> Result<Buffer> {
     let size = bytes.len().max(4).next_multiple_of(4);
+    if gpu.vendor() == 0x8086 {
+        return gpu.filled(size as u64, |out| {
+            out[..bytes.len()].copy_from_slice(bytes);
+            out[bytes.len()..].fill(0);
+            Ok(())
+        });
+    }
     for _ in 0..3 {
         let buffer = gpu.filled(size as u64, |out| {
             out[..bytes.len()].copy_from_slice(bytes);
@@ -80,36 +88,35 @@ pub struct Mat {
 /// Q6_K blocks (210 bytes per 256 values) as `mv`'s kind 3: per block 13 uvec4 (low nibbles,
 /// 2-bit highs, int8 scales) and the block's scale as f32.
 pub fn repack_q6k(bytes: &[u8], rows: usize, cols: usize) -> (Vec<u8>, Vec<f32>) {
+    use rayon::prelude::*;
     let blocks = rows * cols / 256;
     let mut w = vec![0u8; blocks * 208];
     let mut s = vec![0f32; blocks];
-    for (b, (src, (dst, d))) in bytes
-        .chunks_exact(210)
-        .zip(w.chunks_exact_mut(208).zip(s.iter_mut()))
-        .enumerate()
-    {
-        let _ = b;
-        let (ql, qh, sc) = (&src[..128], &src[128..192], &src[192..208]);
-        *d = kuno_text::quant::f16_to_f32(u16::from_le_bytes([src[208], src[209]]));
-        let mut q = [0u8; 256];
-        for half in 0..2 {
-            let (ql, qh) = (&ql[half * 64..], &qh[half * 32..]);
-            for l in 0..32 {
-                let y = &mut q[half * 128..];
-                y[l] = (ql[l] & 15) | ((qh[l] & 3) << 4);
-                y[l + 32] = (ql[l + 32] & 15) | (((qh[l] >> 2) & 3) << 4);
-                y[l + 64] = (ql[l] >> 4) | (((qh[l] >> 4) & 3) << 4);
-                y[l + 96] = (ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4);
+    bytes
+        .par_chunks_exact(210)
+        .zip(w.par_chunks_exact_mut(208).zip(s.par_iter_mut()))
+        .for_each(|(src, (dst, d))| {
+            let (ql, qh, sc) = (&src[..128], &src[128..192], &src[192..208]);
+            *d = kuno_text::quant::f16_to_f32(u16::from_le_bytes([src[208], src[209]]));
+            let mut q = [0u8; 256];
+            for half in 0..2 {
+                let (ql, qh) = (&ql[half * 64..], &qh[half * 32..]);
+                for l in 0..32 {
+                    let y = &mut q[half * 128..];
+                    y[l] = (ql[l] & 15) | ((qh[l] & 3) << 4);
+                    y[l + 32] = (ql[l + 32] & 15) | (((qh[l] >> 2) & 3) << 4);
+                    y[l + 64] = (ql[l] >> 4) | (((qh[l] >> 4) & 3) << 4);
+                    y[l + 96] = (ql[l + 32] >> 4) | (((qh[l] >> 6) & 3) << 4);
+                }
             }
-        }
-        let (lo, rest) = dst.split_at_mut(128);
-        let (hi, scales) = rest.split_at_mut(64);
-        for (v, &value) in q.iter().enumerate() {
-            lo[v / 2] |= (value & 15) << (4 * (v % 2));
-            hi[v / 4] |= (value >> 4) << (2 * (v % 4));
-        }
-        scales.copy_from_slice(sc);
-    }
+            let (lo, rest) = dst.split_at_mut(128);
+            let (hi, scales) = rest.split_at_mut(64);
+            for (v, &value) in q.iter().enumerate() {
+                lo[v / 2] |= (value & 15) << (4 * (v % 2));
+                hi[v / 4] |= (value >> 4) << (2 * (v % 4));
+            }
+            scales.copy_from_slice(sc);
+        });
     (w, s)
 }
 

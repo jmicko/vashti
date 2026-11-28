@@ -1,0 +1,112 @@
+// kda.comp for a batch (its `tokens` steps in order), the head's state in registers for the
+// whole batch: workgroup h is head h, 512 lanes; lane (p, j) = (lane / 128, lane % 128) holds
+// rows [32p, 32p + 32) of the state's column j. Lanes p < 3 run the causal conv of part p
+// (q, k, v) for channel j. Per token the column's sums over rows are four partial sums,
+// added in shared memory. Token t's qkv at t*qkv_st, fg at t*fg_st, braw at t*braw_st +
+// braw_off, out at t*o_st.
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 512) in;
+layout(set = 0, binding = 0) readonly buffer Qkv { float qkv[]; };
+layout(set = 0, binding = 1) readonly buffer Conv { vec4 conv[]; };
+layout(set = 0, binding = 2) buffer Hist { float hist[]; };
+layout(set = 0, binding = 3) readonly buffer Fg { float fg[]; };       // f [d], gate [d]
+layout(set = 0, binding = 4) readonly buffer Braw { float braw[]; };
+layout(set = 0, binding = 5) readonly buffer Params { float a[64]; float onorm[128]; float dt[]; };
+layout(set = 0, binding = 6) buffer State { float S[]; };
+layout(set = 0, binding = 7) writeonly buffer Out { float o[]; };
+layout(push_constant) uniform Constants { uint d; float lower; float eps; uint braw_off; uint tokens; uint qkv_st; uint fg_st; uint braw_st; uint o_st; } p;
+
+shared float vals[3][128];
+shared float qs[128], ks[128], decay[128];
+shared float part[4][128];
+shared float red[3][32];
+
+float sigmoid(float v) { return 1.0 / (1.0 + exp(-v)); }
+float silu(float v) { return v / (1.0 + exp(-v)); }
+
+// The sum over the 128 lanes of row group 0 (or 1), from those lanes (slot: shared row).
+float total128(float v, uint slot, bool mine) {
+    v = subgroupAdd(mine ? v : 0.0);
+    if (mine && gl_SubgroupInvocationID == 0) red[slot][gl_SubgroupID % (128 / gl_SubgroupSize)] = v;
+    barrier();
+    float t = 0.0;
+    for (uint i = 0; i < 128 / gl_SubgroupSize; i++) t += red[slot][i];
+    return t;
+}
+
+void main() {
+    uint h = gl_WorkGroupID.x, lane = gl_LocalInvocationIndex;
+    uint j = lane % 128, g = lane / 128;
+    uint c = h * 128 + j;
+    float h0 = 0.0, h1 = 0.0, h2 = 0.0;
+    vec4 w = vec4(0.0);
+    if (g < 3) {
+        uint ch = g * p.d + c;
+        w = conv[ch];
+        h0 = hist[ch];
+        h1 = hist[3 * p.d + ch];
+        h2 = hist[6 * p.d + ch];
+    }
+    uint base = h * 128 * 128 + j;
+    float s[32];
+    for (uint r = 0; r < 32; r++) s[r] = S[base + (g * 32 + r) * 128];
+    float beta_a = a[h], dtc = dt[c];
+    for (uint tk = 0; tk < p.tokens; tk++) {
+        uint qb = tk * p.qkv_st, fb = tk * p.fg_st, bb = tk * p.braw_st, ob = tk * p.o_st;
+        if (g < 3) {
+            float now = qkv[qb + g * p.d + c];
+            float sum = w.x * h0 + w.y * h1 + w.z * h2 + w.w * now;
+            h0 = h1;
+            h1 = h2;
+            h2 = now;
+            vals[g][j] = silu(sum);
+        }
+        barrier();
+        float q = vals[0][j], k = vals[1][j], v = vals[2][j];
+        // Lanes of group 0 sum q^2, group 1 k^2 (two reductions sharing one barrier each).
+        float qn = total128(q * q, 0, g == 0);
+        float kn = 0.0;
+        {
+            float x = subgroupAdd(g == 1 ? k * k : 0.0);
+            if (g == 1 && gl_SubgroupInvocationID == 0) red[1][gl_SubgroupID % (128 / gl_SubgroupSize)] = x;
+            barrier();
+            for (uint i = 0; i < 128 / gl_SubgroupSize; i++) kn += red[1][i];
+        }
+        if (g == 0) qs[j] = q / max(sqrt(qn), 1e-6) * (1.0 / sqrt(128.0));
+        if (g == 1) ks[j] = k / max(sqrt(kn), 1e-6);
+        if (g == 2) decay[j] = exp(sigmoid(-(fg[fb + c] + dtc) * beta_a) * p.lower);
+        float beta = sigmoid(braw[bb + p.braw_off + h]);
+        barrier();
+        float pred = 0.0;
+        for (uint r = 0; r < 32; r++) {
+            uint i = g * 32 + r;
+            pred += s[r] * decay[i] * ks[i];
+        }
+        part[g][j] = pred;
+        barrier();
+        pred = (part[0][j] + part[1][j]) + (part[2][j] + part[3][j]);
+        float delta = (v - pred) * beta;
+        float acc = 0.0;
+        for (uint r = 0; r < 32; r++) {
+            uint i = g * 32 + r;
+            float e = s[r] * decay[i] + ks[i] * delta;
+            s[r] = e;
+            acc += e * qs[i];
+        }
+        barrier();
+        part[g][j] = acc;
+        barrier();
+        acc = (part[0][j] + part[1][j]) + (part[2][j] + part[3][j]);
+        float on = total128(acc * acc, 2, g == 0);
+        if (g == 0) o[ob + c] = acc / sqrt(on / 128.0 + p.eps) * onorm[j] * sigmoid(fg[fb + p.d + c]);
+        barrier();
+    }
+    for (uint r = 0; r < 32; r++) S[base + (g * 32 + r) * 128] = s[r];
+    if (g < 3) {
+        uint ch = g * p.d + c;
+        hist[ch] = h0;
+        hist[3 * p.d + ch] = h1;
+        hist[6 * p.d + ch] = h2;
+    }
+}

@@ -5,6 +5,6 @@ cd "$(dirname "$0")"
 for f in *.comp; do
     glslangValidator -V --target-env vulkan1.3 --quiet -o "${f%.comp}.spv" "$f"
 done
-for f in hcdot hcmix kda dsanorm idxstore idxscore idxselect route; do
+for f in hcdot hcmix dsanorm idxstore idxscore idxselect route; do
     glslangValidator -V --target-env vulkan1.3 --quiet -DBATCHED -o "${f}_b.spv" "$f.comp"
 done

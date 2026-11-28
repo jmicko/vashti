@@ -28,7 +28,13 @@ fn main() {
     let model = Model::open(&shards).unwrap();
     let t = std::time::Instant::now();
     let gpu =
-        kuno_image::engine::gpu::Gpu::open(kuno_image::engine::gpu::Select::Pci(pci)).unwrap();
+        // KUNO_GLM_SIDE=0: one queue (no side queue streaming the experts beside compute).
+        if std::env::var("KUNO_GLM_SIDE").is_ok_and(|v| v == "0") {
+            kuno_image::engine::gpu::Gpu::open(kuno_image::engine::gpu::Select::Pci(pci)).unwrap()
+        } else {
+            kuno_image::engine::gpu::Gpu::open_side(kuno_image::engine::gpu::Select::Pci(pci))
+                .unwrap()
+        };
     // KUNO_GLM_SECOND: a second GPU (PCI address) for the next tier of experts.
     let second = std::env::var("KUNO_GLM_SECOND").ok().map(|p| {
         kuno_image::engine::gpu::Gpu::open(kuno_image::engine::gpu::Select::Pci(p)).unwrap()
@@ -73,8 +79,8 @@ fn main() {
                 |b, (i, v)| if *v > b.1 { (i, *v) } else { b },
             );
         println!(
-            "worst {worst:.2e}; batched next {next}, reference next {}",
-            best.0
+            "worst {worst:.2e}; batched next {next} (reference logit {:.3}), reference next {} (logit {:.3})",
+            logits[next as usize], best.0, best.1
         );
         return;
     }

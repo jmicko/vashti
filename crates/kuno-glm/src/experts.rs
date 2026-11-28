@@ -123,6 +123,151 @@ pub fn device_layout(
     [gw, gs, dw, ds]
 }
 
+/// One part of `raw` rows of type `t` in the device's layout, written to `w` (bodies) and
+/// `s` (f16 scales; empty for IQ4_XS).
+fn repack_into(t: TensorType, raw: &[u8], w: &mut [u8], s: &mut [u8]) {
+    match t {
+        TensorType::Iq2S | TensorType::Iq3S => {
+            let bb = block_bytes(t);
+            for ((b, wo), so) in raw
+                .chunks_exact(bb)
+                .zip(w.chunks_exact_mut(bb - 2))
+                .zip(s.chunks_exact_mut(2))
+            {
+                so.copy_from_slice(&b[..2]);
+                wo.copy_from_slice(&b[2..]);
+            }
+        }
+        _ => w.copy_from_slice(raw),
+    }
+}
+
+/// Part `k` (gu_w, gu_s, down_w, down_s) of an expert's device layout into `out` (its
+/// exact size).
+fn layout_part_into(
+    gk: TensorType,
+    dk: TensorType,
+    raw: &[u8],
+    ff: usize,
+    gr: usize,
+    k: usize,
+    out: &mut [u8],
+) {
+    let (t, r) = if k < 2 {
+        (gk, &raw[..2 * ff * gr])
+    } else {
+        (dk, &raw[2 * ff * gr..])
+    };
+    match t {
+        TensorType::Iq2S | TensorType::Iq3S => {
+            let bb = block_bytes(t);
+            if k.is_multiple_of(2) {
+                for (b, o) in r.chunks_exact(bb).zip(out.chunks_exact_mut(bb - 2)) {
+                    o.copy_from_slice(&b[2..]);
+                }
+            } else {
+                for (b, o) in r.chunks_exact(bb).zip(out.chunks_exact_mut(2)) {
+                    o.copy_from_slice(&b[..2]);
+                }
+            }
+        }
+        _ if k.is_multiple_of(2) => out.copy_from_slice(r),
+        _ => {}
+    }
+}
+
+/// An expert's whole device layout (gu_w, gu_s, down_w, down_s) into `out`.
+fn layout_into(
+    gk: TensorType,
+    dk: TensorType,
+    raw: &[u8],
+    ff: usize,
+    gr: usize,
+    stride: &[usize; 4],
+    out: &mut [u8],
+) {
+    let (g, d) = raw.split_at(2 * ff * gr);
+    let (gw, rest) = out.split_at_mut(stride[0] * 4);
+    let (gs, rest) = rest.split_at_mut(stride[1] * 4);
+    let (dw, ds) = rest.split_at_mut(stride[2] * 4);
+    repack_into(gk, g, gw, gs);
+    repack_into(dk, d, dw, &mut ds[..stride[3] * 4]);
+}
+
+/// Bytes per expert of block `il` (raw rows; the device layout is the same size).
+pub fn slot_bytes(model: &Model, il: usize) -> Result<usize> {
+    let name = |p: &str| format!("blk.{il}.ffn_{p}_exps.weight");
+    let (_, gr, _) = model.layout(&name("gate"))?;
+    let (_, dr, _) = model.layout(&name("down"))?;
+    Ok(2 * model.hp.ff_expert * gr + model.hp.embd * dr)
+}
+
+/// Host-visible chunks (about 1 GiB each) for `count` experts of `slot_bytes` and a spare.
+pub fn host_arena(gpu: &Gpu, slot_bytes: usize, count: usize) -> Result<Vec<Mapped>> {
+    let per_chunk = ((1usize << 30) / slot_bytes).max(1);
+    let total = count + 1;
+    (0..total.div_ceil(per_chunk))
+        .map(|c| {
+            let n = per_chunk.min(total - c * per_chunk);
+            gpu.mapped((n * slot_bytes) as u64)
+        })
+        .collect()
+}
+
+/// Block `il`'s experts read (as `read_block_threads`) while its host chunks for `count`
+/// experts are allocated (allocation zeroes them: as slow as a third of the reading).
+pub fn prefetch_block(
+    model: &Model,
+    gpu: &Gpu,
+    il: usize,
+    count: usize,
+) -> Result<(Vec<Vec<u8>>, Vec<Mapped>)> {
+    let bytes = slot_bytes(model, il)?;
+    std::thread::scope(|sc| {
+        let t = std::time::Instant::now();
+        let alloc = sc.spawn(move || {
+            let a = host_arena(gpu, bytes, count);
+            (a, t.elapsed().as_secs_f64())
+        });
+        let raws = read_block_threads(model, il, 8)?;
+        let read_s = t.elapsed().as_secs_f64();
+        let (arena, alloc_s) = alloc.join().map_err(|_| "gpu_memory")?;
+        let arena = arena?;
+        if std::env::var_os("KUNO_GLM_TIMING").is_some() {
+            eprintln!("block {il} read in {read_s:.2} s, its chunks allocated in {alloc_s:.2} s");
+        }
+        Ok((raws, arena))
+    })
+}
+
+/// Block `il`'s experts read by `threads` threads of their own (beside rayon's, which the
+/// placement of the previous block keeps busy).
+pub fn read_block_threads(model: &Model, il: usize, threads: usize) -> Result<Vec<Vec<u8>>> {
+    let e = model.hp.experts;
+    let reader = model.reader()?;
+    let mut out: Vec<Vec<u8>> = vec![Vec::new(); e];
+    std::thread::scope(|sc| -> Result<()> {
+        let handles: Vec<_> = (0..threads)
+            .map(|i| {
+                let reader = &reader;
+                sc.spawn(move || -> Result<Vec<(usize, Vec<u8>)>> {
+                    (i..e)
+                        .step_by(threads)
+                        .map(|x| read_expert(model, reader, il, x).map(|r| (x, r)))
+                        .collect()
+                })
+            })
+            .collect();
+        for h in handles {
+            for (x, r) in h.join().map_err(|_| "model_read_failed")?? {
+                out[x] = r;
+            }
+        }
+        Ok(())
+    })?;
+    Ok(out)
+}
+
 /// An expert back from the device's layout to raw rows.
 pub fn host_layout(gk: TensorType, dk: TensorType, parts: [&[u8]; 4]) -> Vec<u8> {
     let mut raw = Vec::new();
@@ -132,7 +277,7 @@ pub fn host_layout(gk: TensorType, dk: TensorType, parts: [&[u8]; 4]) -> Vec<u8>
 }
 
 /// A block's expert `e` as raw rows from the file.
-fn read_expert(model: &Model, il: usize, e: usize) -> Result<Vec<u8>> {
+pub fn read_expert(model: &Model, reader: &Reader, il: usize, e: usize) -> Result<Vec<u8>> {
     let hp = &model.hp;
     let (n, ff) = (hp.embd, hp.ff_expert);
     let name = |p: &str| format!("blk.{il}.ffn_{p}_exps.weight");
@@ -141,15 +286,18 @@ fn read_expert(model: &Model, il: usize, e: usize) -> Result<Vec<u8>> {
     let mut v = vec![0u8; 2 * ff * gr + n * dr];
     let (g, rest) = v.split_at_mut(ff * gr);
     let (u, d) = rest.split_at_mut(ff * gr);
-    model.read_rows(&name("gate"), e * ff, g)?;
-    model.read_rows(&name("up"), e * ff, u)?;
-    model.read_rows(&name("down"), e * n, d)?;
+    model.read_rows_with(reader, &name("gate"), e * ff, g)?;
+    model.read_rows_with(reader, &name("up"), e * ff, u)?;
+    model.read_rows_with(reader, &name("down"), e * n, d)?;
     Ok(v)
 }
+
+pub type Reader<'m> = kuno_text::gguf::PositionalReader<'m>;
 
 /// One block's bank of `capacity` slots on `gpu`, the first holding `ids`.
 fn pool(
     model: &Model,
+    get: &Raw,
     gpu: &Gpu,
     il: usize,
     capacity: usize,
@@ -164,12 +312,56 @@ fn pool(
     let name = |p: &str| format!("blk.{il}.ffn_{p}_exps.weight");
     let (gk, gr, _) = model.layout(&name("gate"))?;
     let (dk, _, _) = model.layout(&name("down"))?;
+    if ids.is_empty() {
+        return Err("expert_bank_empty");
+    }
+    if gpu.vendor() == 0x8086 {
+        // Each part written straight into its upload, in parallel (no check: see `filled`).
+        let stride = device_layout(gk, dk, &get(ids[0])?, ff, gr).map(|p| p.len() / 4);
+        let mut bufs = Vec::with_capacity(4);
+        for (k, &st) in stride.iter().enumerate() {
+            let bytes = (capacity * st * 4).max(4);
+            bufs.push(gpu.filled(bytes as u64, |out| {
+                out.fill(0);
+                if st == 0 {
+                    return Ok(());
+                }
+                out.par_chunks_mut(st * 4)
+                    .zip(ids.par_iter())
+                    .try_for_each(|(o, &e)| -> Result<()> {
+                        layout_part_into(gk, dk, &get(e)?, ff, gr, k, o);
+                        Ok(())
+                    })
+                    .map_err(|_| "model_read_failed")
+            })?);
+        }
+        for (k, &e) in ids.iter().enumerate() {
+            slot[e] = Some(k as u32);
+        }
+        let slots: Vec<u32> = slot.iter().map(|s| s.unwrap_or(u32::MAX)).collect();
+        let mut b = bufs.into_iter();
+        return Ok(Some(DevicePool {
+            gu_w: b.next().ok_or("gpu_memory")?,
+            gu_s: b.next().ok_or("gpu_memory")?,
+            down_w: b.next().ok_or("gpu_memory")?,
+            down_s: b.next().ok_or("gpu_memory")?,
+            slots: filled(gpu, kuno_image::engine::gpu::bytes_of(&slots))?,
+            stride,
+            capacity,
+        }));
+    }
     let mut parts: [Vec<u8>; 4] = Default::default();
     let mut stride = [0usize; 4];
-    for (k, &e) in ids.iter().enumerate() {
+    // Read in parallel (the device's copies are made from them in order).
+    let layouts: Vec<[Vec<u8>; 4]> = ids
+        .par_iter()
+        .map(|&e| -> Result<[Vec<u8>; 4]> {
+            let raw = get(e)?;
+            Ok(device_layout(gk, dk, &raw, ff, gr))
+        })
+        .collect::<Result<_>>()?;
+    for ((k, &e), p) in ids.iter().enumerate().zip(layouts) {
         slot[e] = Some(k as u32);
-        let raw = read_expert(model, il, e)?;
-        let p = device_layout(gk, dk, &raw, ff, gr);
         for i in 0..4 {
             stride[i] = p[i].len() / 4;
             parts[i].extend_from_slice(&p[i]);
@@ -194,14 +386,12 @@ fn pool(
     }))
 }
 
-/// Places every MoE block's experts: the same number of slots per block filling
-/// `device_bytes` on `gpu`, then the second device's budget there (fixed), the rest in memory.
-pub fn place(
-    model: &Model,
-    gpu: &Gpu,
-    device_bytes: u64,
-    second: Option<(&Gpu, u64)>,
-) -> Result<Vec<Option<BlockExperts>>> {
+/// A block's expert `e` as raw rows (read now, or read before).
+pub type Raw<'a> = dyn Fn(usize) -> Result<std::borrow::Cow<'a, [u8]>> + Sync + 'a;
+
+/// Slots per block on `gpu` within `device_bytes` (the same for every block), and on the
+/// second device within its budget.
+pub fn plan(model: &Model, device_bytes: u64, second: Option<u64>) -> Result<(usize, usize, u64)> {
     let hp = &model.hp;
     let (n, ff) = (hp.embd, hp.ff_expert);
     let name = |il: usize, p: &str| format!("blk.{il}.ffn_{p}_exps.weight");
@@ -212,29 +402,88 @@ pub fn place(
         per_slot += (2 * ff * gr + n * dr) as u64;
     }
     let slots1 = ((device_bytes / per_slot.max(1)) as usize).min(hp.experts);
-    let slots2 = ((second.map_or(0, |s| s.1) / per_slot.max(1)) as usize).min(hp.experts - slots1);
+    let slots2 = ((second.unwrap_or(0) / per_slot.max(1)) as usize).min(hp.experts - slots1);
+    Ok((slots1, slots2, per_slot))
+}
+
+/// Places every MoE block's experts: the same number of slots per block filling
+/// `device_bytes` on `gpu`, then the second device's budget there (fixed), the rest in memory.
+pub fn place(
+    model: &Model,
+    gpu: &Gpu,
+    device_bytes: u64,
+    second: Option<(&Gpu, u64)>,
+) -> Result<Vec<Option<BlockExperts>>> {
+    let hp = &model.hp;
+    let (slots1, slots2, per_slot) = plan(model, device_bytes, second.map(|s| s.1))?;
+    let reader = model.reader()?;
     let mut out = Vec::with_capacity(hp.layers);
     for il in 0..hp.layers {
         if il < hp.dense_lead {
             out.push(None);
             continue;
         }
+        let ids1: Vec<usize> = (0..slots1).collect();
+        let ids2: Vec<usize> = (slots1..slots1 + slots2).collect();
+        let get = |e: usize| read_expert(model, &reader, il, e).map(std::borrow::Cow::Owned);
+        out.push(Some(place_block(
+            model,
+            gpu,
+            il,
+            &ids1,
+            second.map(|s| (s.0, &ids2[..])),
+            &get,
+            None,
+        )?));
+    }
+    eprintln!(
+        "experts: {slots1} slots per block on the device ({:.1} GB), {slots2} on the second",
+        (slots1 as u64 * per_slot) as f64 / 1e9
+    );
+    Ok(out)
+}
+
+/// Reads block `il`'s experts in parallel (raw rows, for `place_block`).
+pub fn read_block(model: &Model, reader: &Reader, il: usize) -> Result<Vec<Vec<u8>>> {
+    (0..model.hp.experts)
+        .into_par_iter()
+        .map(|e| read_expert(model, reader, il, e))
+        .collect()
+}
+
+/// Places block `il`'s experts: `ids1` in the device's bank (in slot order), `ids2` on the
+/// second device, the rest in host memory; `get` gives each expert's raw rows.
+pub fn place_block(
+    model: &Model,
+    gpu: &Gpu,
+    il: usize,
+    ids1: &[usize],
+    second: Option<(&Gpu, &[usize])>,
+    get: &Raw,
+    arena: Option<Vec<Mapped>>,
+) -> Result<BlockExperts> {
+    let hp = &model.hp;
+    let ff = hp.ff_expert;
+    let name = |il: usize, p: &str| format!("blk.{il}.ffn_{p}_exps.weight");
+    let started = std::time::Instant::now();
+    let slots1 = ids1.len();
+    {
         let (gk, gr, _) = model.layout(&name(il, "gate"))?;
         let (dk, dr, _) = model.layout(&name(il, "down"))?;
         cpu::check(gk)?;
         cpu::check(dk)?;
         let mut slot = vec![None; hp.experts];
         let mut slot2 = vec![None; hp.experts];
-        let ids1: Vec<usize> = (0..slots1).collect();
-        let ids2: Vec<usize> = (slots1..slots1 + slots2).collect();
-        let device = pool(model, gpu, il, slots1, &ids1, &mut slot)?;
+        let t = std::time::Instant::now();
+        let device = pool(model, get, gpu, il, slots1, ids1, &mut slot)?;
+        let bank_s = t.elapsed().as_secs_f64();
         let device2 = match second {
-            Some((g, _)) => pool(model, g, il, slots2, &ids2, &mut slot2)?,
+            Some((g, ids2)) => pool(model, get, g, il, ids2.len(), ids2, &mut slot2)?,
             None => None,
         };
         // The rest into host-visible chunks (plus one spare slot), read in parallel.
         let stride = {
-            let raw = read_expert(model, il, 0)?;
+            let raw = get(0)?;
             device_layout(gk, dk, &raw, ff, gr).map(|p| p.len() / 4)
         };
         let slot_bytes = stride.iter().sum::<usize>() * 4;
@@ -246,12 +495,10 @@ pub fn place(
                 .collect()
         };
         let per_chunk = ((1usize << 30) / slot_bytes).max(1);
-        let total = on_host.len() + 1;
-        let mut arena = Vec::new();
-        for c in 0..total.div_ceil(per_chunk) {
-            let n = per_chunk.min(total - c * per_chunk);
-            arena.push(gpu.mapped((n * slot_bytes) as u64)?);
-        }
+        let arena = match arena {
+            Some(a) if a.len() == (on_host.len() + 1).div_ceil(per_chunk) => a,
+            _ => host_arena(gpu, slot_bytes, on_host.len())?,
+        };
         let mut host_slot = vec![None; hp.experts];
         for (h, &e) in on_host.iter().enumerate() {
             host_slot[e] = Some(h as u32);
@@ -266,20 +513,20 @@ pub fn place(
                     let Some(&e) = on_host.get(c * per_chunk + k) else {
                         return Ok(());
                     };
-                    let raw = read_expert(model, il, e)?;
-                    let mut at = 0;
-                    for part in device_layout(gk, dk, &raw, ff, gr) {
-                        out[at..at + part.len()].copy_from_slice(&part);
-                        at += part.len();
-                    }
+                    layout_into(gk, dk, &get(e)?, ff, gr, &stride, out);
                     Ok(())
                 })?;
         }
+        eprintln!(
+            "block {il}'s experts placed ({:.1} s; bank {:.1} s)",
+            started.elapsed().as_secs_f64(),
+            bank_s
+        );
         let mut resident = vec![None; slots1];
         for (k, e) in ids1.iter().enumerate() {
             resident[k] = Some(*e);
         }
-        out.push(Some(BlockExperts {
+        Ok(BlockExperts {
             gate_kind: gk,
             down_kind: dk,
             slot,
@@ -295,13 +542,8 @@ pub fn place(
             down_row: dr,
             resident,
             uses: Mutex::new(vec![(0.0, 0); hp.experts]),
-        }));
+        })
     }
-    eprintln!(
-        "experts: {slots1} slots per block on the device ({:.1} GB), {slots2} on the second",
-        (slots1 as u64 * per_slot) as f64 / 1e9
-    );
-    Ok(out)
 }
 
 /// A planned trade: expert `up` into device slot `slot` of block `block`, `down` (if any)
@@ -570,7 +812,7 @@ mod tests {
             let name = |p: &str| format!("blk.{il}.ffn_{p}_exps.weight");
             let (gk, gr, _) = model.layout(&name("gate")).unwrap();
             let (dk, _, _) = model.layout(&name("down")).unwrap();
-            let raw = read_expert(&model, il, 7).unwrap();
+            let raw = read_expert(&model, &model.reader().unwrap(), il, 7).unwrap();
             let p = device_layout(gk, dk, &raw, model.hp.ff_expert, gr);
             let back = host_layout(gk, dk, [&p[0], &p[1], &p[2], &p[3]]);
             assert!(back == raw, "block {il}");
