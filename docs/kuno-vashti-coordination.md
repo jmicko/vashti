@@ -1,14 +1,15 @@
 # Kuno and Vashti Coordination
 
-**Kuno GLM 5.3 Flash (2026-11-28). Installed only if this note says so; Vashti handoff.**
+**Kuno GLM 5.3 Flash (2026-11-28). Installed (Kuno v11); Vashti handoff.**
 Contract: [Kuno GLM](kuno-glm.md). A second native text model,
 `kuno-glm-5.3-flash:iq3_xxs`, appears in `/api/tags` and `/v1/models` (`kuno_backend:
 "rust-vulkan"`, family `glm5next`) beside the existing native one, and answers `/api/chat`
 and `/api/generate` with the same fields as that model: `think` (absent/false: none;
 true/"low"/"medium"/"high"), reasoning in `message.thinking`, Ollama `tools`/`tool_calls`,
 streaming NDJSON. Tested through a development gateway (chat, streaming with thinking, a
-tool call and its result, a reused second turn, generate, `/api/ps`, unload, idle stop),
-not the installed service.
+tool call and its result, a reused second turn, generate, `/api/ps`, unload, idle stop)
+and again on the installed service; image, video and speech results are byte-identical to
+v10's, and an image request unloads GLM.
 
 Vashti notes (no UI change is required; any user-facing change is proposed to the user
 first):
