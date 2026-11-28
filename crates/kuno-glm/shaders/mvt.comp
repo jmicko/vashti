@@ -1,0 +1,133 @@
+// mv.comp for up to TT tokens at once (a verification's small batch): y[t][r] = sum_c
+// W[r][c] x[t][c] for t < tokens, token t's input at t*x_st + x_off and its output at
+// t*y_st + y_off (floats). One subgroup per row, several rows per workgroup; each weight is
+// read and decoded once for all the tokens. Per token the sums are mv.comp's, in its order
+// (four interleaved accumulators, the same products), so the results equal `step`'s.
+// Weight kinds, flags (2: add into y) and the per-head grouping as in mv.comp (no wide mode).
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uvec4 w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) buffer Y { float y[]; };
+layout(push_constant) uniform Constants {
+    uint rows; uint cols; uint kind; uint x_off; uint y_off; uint w_row0; uint flags;
+    uint group; uint gstride; uint x_st; uint y_st; uint tokens;
+} p;
+
+const uint TT = 4;
+
+vec4 q4(int v, float sc) {
+    return vec4(bitfieldExtract(v, 0, 8), bitfieldExtract(v, 8, 8),
+                bitfieldExtract(v, 16, 8), bitfieldExtract(v, 24, 8)) * sc;
+}
+
+// Eight 6-bit values (nibbles of `lo`, 2-bit highs of `hi` from bit `hb`), less 32.
+void six(uint lo, uint hi, uint hb, out vec4 a, out vec4 b) {
+    a = vec4(
+        float(int((lo & 15u) | (((hi >> hb) & 3u) << 4)) - 32),
+        float(int(((lo >> 4) & 15u) | (((hi >> (hb + 2)) & 3u) << 4)) - 32),
+        float(int(((lo >> 8) & 15u) | (((hi >> (hb + 4)) & 3u) << 4)) - 32),
+        float(int(((lo >> 12) & 15u) | (((hi >> (hb + 6)) & 3u) << 4)) - 32));
+    b = vec4(
+        float(int(((lo >> 16) & 15u) | (((hi >> (hb + 8)) & 3u) << 4)) - 32),
+        float(int(((lo >> 20) & 15u) | (((hi >> (hb + 10)) & 3u) << 4)) - 32),
+        float(int(((lo >> 24) & 15u) | (((hi >> (hb + 12)) & 3u) << 4)) - 32),
+        float(int((lo >> 28) | (((hi >> (hb + 14)) & 3u) << 4)) - 32));
+}
+
+// Task `i` of row `wr` (as mv.comp's `part`) for every token: out[j] for token j < nt, its
+// input at vec4 xb + j*xs.
+void part(uint wr, uint i, uint xb, uint xs, uint nt, out float o[TT]) {
+    for (uint j = 0; j < TT; j++) o[j] = 0.0;
+    if (p.kind == 3) {
+        uint blocks = p.cols / 256;
+        uint block = i / 8, k = i % 8;
+        uint base = (wr * blocks + block) * 13;
+        uvec4 lo = w[base + k];
+        uvec4 hw = w[base + 8 + k / 2];
+        uvec2 hi = (k & 1) == 0 ? hw.xy : hw.zw;
+        uint sc = w[base + 12][k / 2];
+        float s0 = float(bitfieldExtract(int(sc), int((k & 1) * 16), 8));
+        float s1 = float(bitfieldExtract(int(sc), int((k & 1) * 16 + 8), 8));
+        float d = uintBitsToFloat(s[wr * blocks + block]);
+        vec4 v[8];
+        six(lo.x, hi.x, 0, v[0], v[1]);
+        six(lo.y, hi.x, 16, v[2], v[3]);
+        six(lo.z, hi.y, 0, v[4], v[5]);
+        six(lo.w, hi.y, 16, v[6], v[7]);
+        uint c = (block * 256 + k * 32) / 4;
+        for (uint j = 0; j < TT; j++) {
+            if (j >= nt) break;
+            uint c4 = xb + j * xs + c;
+            float a = (dot(v[0], x[c4]) + dot(v[1], x[c4 + 1]))
+                    + (dot(v[2], x[c4 + 2]) + dot(v[3], x[c4 + 3]));
+            float b = (dot(v[4], x[c4 + 4]) + dot(v[5], x[c4 + 5]))
+                    + (dot(v[6], x[c4 + 6]) + dot(v[7], x[c4 + 7]));
+            o[j] = (a * s0 + b * s1) * d;
+        }
+        return;
+    }
+    uint loads = p.kind == 0 ? p.cols / 16 : p.cols / 4;
+    uvec4 u = w[wr * loads + i];
+    if (p.kind == 0) {
+        uint si = wr * (p.cols / 32) + i / 2;
+        float sc = unpackHalf2x16(s[si >> 1])[si & 1];
+        vec4 v0 = q4(int(u.x), sc), v1 = q4(int(u.y), sc);
+        vec4 v2 = q4(int(u.z), sc), v3 = q4(int(u.w), sc);
+        for (uint j = 0; j < TT; j++) {
+            if (j >= nt) break;
+            uint c4 = xb + j * xs + i * 4;
+            o[j] = dot(v0, x[c4]) + dot(v1, x[c4 + 1]) + dot(v2, x[c4 + 2]) + dot(v3, x[c4 + 3]);
+        }
+        return;
+    }
+    vec4 v = uintBitsToFloat(u);
+    for (uint j = 0; j < TT; j++) {
+        if (j >= nt) break;
+        o[j] = dot(v, x[xb + j * xs + i]);
+    }
+}
+
+void main() {
+    uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    uint r = group * gl_NumSubgroups + gl_SubgroupID;
+    if (r >= p.rows) return;
+    uint lane = gl_SubgroupInvocationID, width = gl_SubgroupSize;
+    uint wr = r + p.w_row0;
+    uint tasks = p.kind == 3 ? p.cols / 32 : (p.kind == 0 ? p.cols / 16 : p.cols / 4);
+    uint xb = (p.x_off + (p.group > 0 ? (r / p.group) * p.gstride : 0)) / 4, xs = p.x_st / 4;
+    uint nt = min(p.tokens, TT);
+    float a1[TT], a2[TT], a3[TT], a4[TT], o[TT];
+    for (uint j = 0; j < TT; j++) {
+        a1[j] = 0.0;
+        a2[j] = 0.0;
+        a3[j] = 0.0;
+        a4[j] = 0.0;
+    }
+    uint i = lane;
+    for (; i + 3 * width < tasks; i += 4 * width) {
+        part(wr, i, xb, xs, nt, o);
+        for (uint j = 0; j < TT; j++) a1[j] += o[j];
+        part(wr, i + width, xb, xs, nt, o);
+        for (uint j = 0; j < TT; j++) a2[j] += o[j];
+        part(wr, i + 2 * width, xb, xs, nt, o);
+        for (uint j = 0; j < TT; j++) a3[j] += o[j];
+        part(wr, i + 3 * width, xb, xs, nt, o);
+        for (uint j = 0; j < TT; j++) a4[j] += o[j];
+    }
+    for (; i < tasks; i += width) {
+        part(wr, i, xb, xs, nt, o);
+        for (uint j = 0; j < TT; j++) a1[j] += o[j];
+    }
+    bool add = (p.flags & 2) != 0;
+    for (uint j = 0; j < TT; j++) {
+        if (j >= nt) break;
+        float v = subgroupAdd((a1[j] + a2[j]) + (a3[j] + a4[j]));
+        if (lane == 0) {
+            uint ya = j * p.y_st + p.y_off + r;
+            y[ya] = add ? y[ya] + v : v;
+        }
+    }
+}

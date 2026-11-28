@@ -1,0 +1,90 @@
+// Q6_K products for up to TT tokens (a verification's batch), R rows per subgroup (ROWS: 4,
+// or 2 for mvr2, more workgroups for matrices of few rows): y[t][r]
+// = sum_c W[r][c] x[t][c], token t's input at t*x_st + x_off and its output at t*y_st +
+// y_off (floats). With a few tokens mv.comp's form is bound by reading the inputs (each
+// subgroup reads every token's whole input per row); here a lane holds 16 inputs of each
+// token in registers for R rows, so the inputs are read R times less. Lanes take 16 values
+// (half a Q6_K run of 32: one 16-value scale) at a time. Weights as mv.comp's kind 3; flags
+// (2: add into y) and the per-head grouping as in mv.comp (group a multiple of R).
+#version 460
+#extension GL_KHR_shader_subgroup_arithmetic : require
+layout(local_size_x = 128) in;
+layout(set = 0, binding = 0) readonly buffer Weights { uvec4 w[]; };
+layout(set = 0, binding = 1) readonly buffer Scales { uint s[]; };
+layout(set = 0, binding = 2) readonly buffer X { vec4 x[]; };
+layout(set = 0, binding = 3) buffer Y { float y[]; };
+layout(push_constant) uniform Constants {
+    uint rows; uint cols; uint kind; uint x_off; uint y_off; uint w_row0; uint flags;
+    uint group; uint gstride; uint x_st; uint y_st; uint tokens;
+} p;
+
+#ifndef ROWS
+#define ROWS 4
+#endif
+const uint TT = 4, R = ROWS;
+
+void main() {
+    uint group = gl_WorkGroupID.y * gl_NumWorkGroups.x + gl_WorkGroupID.x;
+    uint r0 = (group * gl_NumSubgroups + gl_SubgroupID) * R;
+    if (r0 >= p.rows) return;
+    uint lane = gl_SubgroupInvocationID, width = gl_SubgroupSize;
+    uint nt = min(p.tokens, TT), nr = min(R, p.rows - r0);
+    uint xb = (p.x_off + (p.group > 0 ? (r0 / p.group) * p.gstride : 0)) / 4, xs = p.x_st / 4;
+    uint blocks = p.cols / 256;
+    float acc[R][TT];
+    for (uint q = 0; q < R; q++)
+        for (uint j = 0; j < TT; j++) acc[q][j] = 0.0;
+    // Half-run h: run k = (h / 2) % 8 of block h / 16, its values [16 * (h % 2), +16).
+    for (uint h = lane; h < blocks * 16; h += width) {
+        uint block = h / 16, k = (h / 2) % 8, hf = h % 2;
+        vec4 xv[TT][4];
+        uint c = (block * 256 + k * 32 + hf * 16) / 4;
+        for (uint j = 0; j < TT; j++) {
+            if (j >= nt) break;
+            for (uint u = 0; u < 4; u++) xv[j][u] = x[xb + j * xs + c + u];
+        }
+        for (uint q = 0; q < R; q++) {
+            if (q >= nr) break;
+            uint wr = r0 + q + p.w_row0;
+            uint base = (wr * blocks + block) * 13;
+            uvec4 lo = w[base + k];
+            uvec4 hw = w[base + 8 + k / 2];
+            uint hi = (k & 1) == 0 ? (hf == 0 ? hw.x : hw.y) : (hf == 0 ? hw.z : hw.w);
+            uint sc = w[base + 12][k / 2];
+            float d = uintBitsToFloat(s[wr * blocks + block])
+                * float(bitfieldExtract(int(sc), int((k & 1) * 16 + hf * 8), 8));
+            uint l0 = hf == 0 ? lo.x : lo.z, l1 = hf == 0 ? lo.y : lo.w;
+            vec4 v[4];
+            for (uint u = 0; u < 2; u++) {
+                uint l = u == 0 ? l0 : l1, hb = 16 * u;
+                v[2 * u] = vec4(
+                    float(int((l & 15u) | (((hi >> hb) & 3u) << 4)) - 32),
+                    float(int(((l >> 4) & 15u) | (((hi >> (hb + 2)) & 3u) << 4)) - 32),
+                    float(int(((l >> 8) & 15u) | (((hi >> (hb + 4)) & 3u) << 4)) - 32),
+                    float(int(((l >> 12) & 15u) | (((hi >> (hb + 6)) & 3u) << 4)) - 32));
+                v[2 * u + 1] = vec4(
+                    float(int(((l >> 16) & 15u) | (((hi >> (hb + 8)) & 3u) << 4)) - 32),
+                    float(int(((l >> 20) & 15u) | (((hi >> (hb + 10)) & 3u) << 4)) - 32),
+                    float(int(((l >> 24) & 15u) | (((hi >> (hb + 12)) & 3u) << 4)) - 32),
+                    float(int((l >> 28) | (((hi >> (hb + 14)) & 3u) << 4)) - 32));
+            }
+            for (uint j = 0; j < TT; j++) {
+                if (j >= nt) break;
+                acc[q][j] += ((dot(v[0], xv[j][0]) + dot(v[1], xv[j][1]))
+                            + (dot(v[2], xv[j][2]) + dot(v[3], xv[j][3]))) * d;
+            }
+        }
+    }
+    bool add = (p.flags & 2) != 0;
+    for (uint q = 0; q < R; q++) {
+        if (q >= nr) break;
+        for (uint j = 0; j < TT; j++) {
+            if (j >= nt) break;
+            float v = subgroupAdd(acc[q][j]);
+            if (lane == 0) {
+                uint ya = j * p.y_st + p.y_off + r0 + q;
+                y[ya] = add ? y[ya] + v : v;
+            }
+        }
+    }
+}

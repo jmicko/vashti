@@ -161,8 +161,8 @@ impl<'m> Engine<'m> {
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(2.0f32);
-        // KUNO_GLM_SPEC_TRADES per round at most (default 8: each costs ~1.3 ms of copies
-        // the drafts wait behind), from the blocks after the last round's (in turn).
+        // KUNO_GLM_SPEC_TRADES per round at most (default 8: each ~1.3 ms of copies, on the
+        // side queue beside the drafts where there is one), from the blocks after the last round's (in turn).
         let cap: usize = std::env::var("KUNO_GLM_SPEC_TRADES")
             .ok()
             .and_then(|v| v.parse().ok())
@@ -192,7 +192,13 @@ impl<'m> Engine<'m> {
         if planned.is_empty() {
             return Ok(None);
         }
-        Ok(Some((submit(self, &mut ops)?, planned)))
+        // On the side queue where there is one: the drafts (main queue) need none of it.
+        let pass = if self.gpu.has_side() {
+            submit_sync(self, &mut ops, true, &[], &[])?
+        } else {
+            submit(self, &mut ops)?
+        };
+        Ok(Some((pass, planned)))
     }
 
     /// Settles trades whose pass completed.
@@ -997,6 +1003,54 @@ pub(super) fn mm<'a>(
         return;
     }
     let rows = 128 / this.k.lanes;
+    let constants = vec![
+        m.rows as u32,
+        m.cols as u32,
+        m.kind,
+        x_off as u32,
+        y_off as u32,
+        0,
+        0,
+        group.0 as u32,
+        group.1 as u32,
+        x_st as u32,
+        y_st as u32,
+        tokens as u32,
+    ];
+    // A verification's few tokens: mv's form (KUNO_GLM_MVT=0: mm's).
+    if tokens <= 4 && !std::env::var("KUNO_GLM_MVT").is_ok_and(|v| v == "0") {
+        // Q6_K for two tokens or more: four rows per subgroup, or two for matrices of up
+        // to KUNO_GLM_MVR2_ROWS rows (default 4096); KUNO_GLM_MVR=0: one.
+        let few: usize = std::env::var("KUNO_GLM_MVR2_ROWS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(4096);
+        let per = if m.kind != 3
+            || tokens < 2
+            || !group.0.is_multiple_of(4)
+            || std::env::var("KUNO_GLM_MVR").is_ok_and(|v| v == "0")
+        {
+            1
+        } else if m.rows <= few {
+            2
+        } else {
+            4
+        };
+        let kernel = match per {
+            1 => &this.e.b.mvt,
+            2 => &this.e.b.mvr2,
+            _ => &this.e.b.mvr,
+        };
+        let groups = (m.rows as u32).div_ceil(per * rows);
+        ops.push(Op {
+            kernel,
+            buffers: vec![&m.w, &m.s, x, y],
+            constants,
+            groups: [groups.min(65535), groups.div_ceil(65535), 1],
+            independent: false,
+        });
+        return;
+    }
     ops.push(Op {
         kernel: &this.e.b.mm,
         buffers: vec![&m.w, &m.s, x, y],
@@ -1098,6 +1152,111 @@ mod tests {
 
     use crate::Model;
     use crate::gpu::{Mat, filled};
+
+    /// mvt (a few tokens at once) against mv token by token on real weights: equal sums.
+    #[test]
+    #[ignore = "needs a GPU and the model"]
+    fn few_token_products_equal_single_ones() {
+        let Some(dir) = std::env::var_os("KUNO_GLM_MODEL") else {
+            return;
+        };
+        let mut shards: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok().map(|e| e.path()))
+            .filter(|p| p.extension().is_some_and(|e| e == "gguf"))
+            .collect();
+        shards.sort();
+        let model = Model::open(&shards).unwrap();
+        let pci = std::env::var("KUNO_GLM_GPU").unwrap_or_else(|_| "0000:2d:00.0".into());
+        let gpu = Gpu::open(Select::Pci(pci)).unwrap();
+        let lanes = Some(16);
+        let mv = gpu
+            .kernel(include_bytes!("../../shaders/mv.spv"), 4, 9, lanes)
+            .unwrap();
+        let mvt = gpu
+            .kernel(include_bytes!("../../shaders/mvt.spv"), 4, 12, lanes)
+            .unwrap();
+        let mvr = gpu
+            .kernel(include_bytes!("../../shaders/mvr.spv"), 4, 12, lanes)
+            .unwrap();
+        // Q6_K, Q8_0 and f32 rows.
+        for name in [
+            "blk.5.attn_q.weight",
+            "blk.3.attn_q_b.weight",
+            "blk.5.attn_output.weight",
+            "blk.4.ffn_gate_inp.weight",
+            "blk.0.ffn_down.weight",
+        ] {
+            let Ok(m) = model.matrix(name) else {
+                eprintln!("{name}: not in this model");
+                continue;
+            };
+            let g = Mat::upload(&gpu, &m).unwrap();
+            for tokens in [2usize, 3, 4] {
+                let x: Vec<f32> = (0..tokens * m.cols)
+                    .map(|i| ((i * 7919 + i / m.cols * 13) % 251) as f32 / 61.0 - 2.0)
+                    .collect();
+                let xb = filled(&gpu, bytes_of(&x)).unwrap();
+                let y = gpu.buffer((tokens * m.rows * 4) as u64).unwrap();
+                let (r, c, t) = (m.rows as u32, m.cols as u32, tokens as u32);
+                let groups = r.div_ceil(8);
+                let b = [&g.w, &g.s, &xb, &y];
+                let mut steps = Vec::new();
+                let consts: Vec<Vec<u32>> = (0..t)
+                    .map(|j| vec![r, c, g.kind, j * c, j * r, 0, 0, 0, 0])
+                    .collect();
+                for cs in &consts {
+                    steps.push(Step {
+                        kernel: &mv,
+                        buffers: &b,
+                        constants: cs,
+                        groups: [groups.min(65535), groups.div_ceil(65535), 1],
+                    });
+                }
+                gpu.pass(&steps).unwrap();
+                let stage = gpu.readback((tokens * m.rows * 4) as u64).unwrap();
+                let mut want = vec![0f32; tokens * m.rows];
+                gpu.read_floats(&y, 0, &stage, &mut want).unwrap();
+                let ct = vec![r, c, g.kind, 0, 0, 0, 0, 0, 0, c, r, t];
+                gpu.pass(&[Step {
+                    kernel: &mvt,
+                    buffers: &b,
+                    constants: &ct,
+                    groups: [groups.min(65535), groups.div_ceil(65535), 1],
+                }])
+                .unwrap();
+                let mut got = vec![0f32; tokens * m.rows];
+                gpu.read_floats(&y, 0, &stage, &mut got).unwrap();
+                let differ = got
+                    .iter()
+                    .zip(&want)
+                    .filter(|(a, b)| a.to_bits() != b.to_bits())
+                    .count();
+                eprintln!("{name} x{tokens}: {differ} of {} sums differ", got.len());
+                assert_eq!(differ, 0, "{name} x{tokens}");
+                if g.kind == 3 {
+                    // mvr: four rows per subgroup, its own order of the sums.
+                    let rg = r.div_ceil(32);
+                    gpu.pass(&[Step {
+                        kernel: &mvr,
+                        buffers: &b,
+                        constants: &ct,
+                        groups: [rg.min(65535), rg.div_ceil(65535), 1],
+                    }])
+                    .unwrap();
+                    gpu.read_floats(&y, 0, &stage, &mut got).unwrap();
+                    let scale = want.iter().map(|v| v.abs()).fold(0f32, f32::max);
+                    let worst = got
+                        .iter()
+                        .zip(&want)
+                        .map(|(a, b)| (a - b).abs())
+                        .fold(0f32, f32::max);
+                    eprintln!("  mvr: worst {worst:.2e} of {scale:.2e}");
+                    assert!(worst <= 1e-5 * scale, "mvr {name} x{tokens}");
+                }
+            }
+        }
+    }
 
     /// mmc (half-precision inputs) against mm (f32) on real weights, every row of a token
     /// tile in use: their difference relative to the largest output.

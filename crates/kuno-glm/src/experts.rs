@@ -741,96 +741,123 @@ impl BlockExperts {
         let qs: Vec<cpu::Q8K> = xs.iter().map(|x| cpu::Q8K::new(x)).collect();
         let (gb, gd) = (self.stride[0] * 4 / (2 * ff), self.stride[1] * 4 / (2 * ff));
         let (db, dd) = (self.stride[2] * 4 / n, self.stride[3] * 4 / n);
-        // Gate and up: tasks of 64 rows of one expert, for each of its users.
-        let chunks = (2 * ff).div_ceil(64);
-        let gu_parts: Vec<Vec<f32>> = (0..unique.len() * chunks)
-            .into_par_iter()
-            .map(|task| {
-                let (u, c) = (task / chunks, task % chunks);
-                let (r, len) = (c * 64, 64.min(2 * ff - c * 64));
-                let p = &parts[u];
-                let rows = &p[0][r * gb..][..len * gb];
-                let ds = if gd == 0 {
-                    &[][..]
-                } else {
-                    &p[1][r * gd..][..len * gd]
-                };
-                let mut out = vec![0f32; users[u].len() * len];
-                for (j, &pi) in users[u].iter().enumerate() {
-                    cpu::matvec(
-                        self.gate_kind,
-                        rows,
-                        ds,
-                        gb,
-                        &qs[pairs[pi].0],
-                        &mut out[j * len..][..len],
-                    );
-                }
-                out
-            })
-            .collect();
-        let mut gu = vec![0f32; pairs.len() * 2 * ff];
-        for (task, out) in gu_parts.iter().enumerate() {
-            let (u, c) = (task / chunks, task % chunks);
-            let (r, len) = (c * 64, 64.min(2 * ff - c * 64));
-            for (j, &pi) in users[u].iter().enumerate() {
-                gu[pi * 2 * ff + r..][..len].copy_from_slice(&out[j * len..][..len]);
-            }
+        // Tasks of 64 rows of one expert for each of its users: an expert's down projection
+        // starts when its own gate and up rows are done (no barrier between all experts' two
+        // halves, which kept the bus idle at each block's turn).
+        let (gchunks, dchunks) = ((2 * ff).div_ceil(64), n.div_ceil(64));
+        struct Work {
+            gu: Mutex<Vec<f32>>,
+            left: std::sync::atomic::AtomicUsize,
+            hidden: std::sync::OnceLock<Vec<cpu::Q8K>>,
+            down: Mutex<Vec<f32>>,
         }
-        let hidden: Vec<cpu::Q8K> = gu
-            .par_chunks_exact(2 * ff)
-            .map(|g| {
-                let h: Vec<f32> = (0..ff)
-                    .map(|i| {
-                        let (a, b) = if limit > 1e-6 {
-                            (g[i].min(limit), g[ff + i].clamp(-limit, limit))
-                        } else {
-                            (g[i], g[ff + i])
-                        };
-                        a / (1.0 + (-a).exp()) * b
-                    })
-                    .collect();
-                cpu::Q8K::new(&h)
+        let work: Vec<Work> = users
+            .iter()
+            .map(|u| Work {
+                gu: Mutex::new(vec![0f32; u.len() * 2 * ff]),
+                left: std::sync::atomic::AtomicUsize::new(gchunks),
+                hidden: std::sync::OnceLock::new(),
+                down: Mutex::new(vec![0f32; u.len() * n]),
             })
             .collect();
-        let chunks = n.div_ceil(64);
-        let d_parts: Vec<Vec<f32>> = (0..unique.len() * chunks)
-            .into_par_iter()
-            .map(|task| {
-                let (u, c) = (task / chunks, task % chunks);
-                let (r, len) = (c * 64, 64.min(n - c * 64));
-                let p = &parts[u];
-                let rows = &p[2][r * db..][..len * db];
-                let ds = if dd == 0 {
-                    &[][..]
-                } else {
-                    &p[3][r * dd..][..len * dd]
-                };
-                let mut out = vec![0f32; users[u].len() * len];
-                for (j, &pi) in users[u].iter().enumerate() {
-                    cpu::matvec(
-                        self.down_kind,
-                        rows,
-                        ds,
-                        db,
-                        &hidden[pi],
-                        &mut out[j * len..][..len],
-                    );
-                }
-                out
-            })
-            .collect();
-        let mut d = vec![0f32; pairs.len() * n];
-        for (task, out) in d_parts.iter().enumerate() {
-            let (u, c) = (task / chunks, task % chunks);
+        let down_task = |u: usize, c: usize| {
             let (r, len) = (c * 64, 64.min(n - c * 64));
-            for (j, &pi) in users[u].iter().enumerate() {
-                d[pi * n + r..][..len].copy_from_slice(&out[j * len..][..len]);
+            let p = &parts[u];
+            let rows = &p[2][r * db..][..len * db];
+            let ds = if dd == 0 {
+                &[][..]
+            } else {
+                &p[3][r * dd..][..len * dd]
+            };
+            let hidden = work[u].hidden.get().expect("gate and up first");
+            let mut out = vec![0f32; len];
+            let mut outs = Vec::with_capacity(users[u].len());
+            for h in hidden {
+                cpu::matvec(self.down_kind, rows, ds, db, h, &mut out);
+                outs.push(out.clone());
+            }
+            let mut d = work[u].down.lock().unwrap_or_else(|e| e.into_inner());
+            for (j, o) in outs.iter().enumerate() {
+                d[j * n + r..][..len].copy_from_slice(o);
+            }
+        };
+        rayon::scope(|sc| {
+            for u in 0..unique.len() {
+                for c in 0..gchunks {
+                    let (work, parts, users, pairs, qs, down_task) =
+                        (&work, &parts, &users, &pairs, &qs, &down_task);
+                    sc.spawn(move |sc| {
+                        let (r, len) = (c * 64, 64.min(2 * ff - c * 64));
+                        let p = &parts[u];
+                        let rows = &p[0][r * gb..][..len * gb];
+                        let ds = if gd == 0 {
+                            &[][..]
+                        } else {
+                            &p[1][r * gd..][..len * gd]
+                        };
+                        let mut out = vec![0f32; users[u].len() * len];
+                        for (j, &pi) in users[u].iter().enumerate() {
+                            cpu::matvec(
+                                self.gate_kind,
+                                rows,
+                                ds,
+                                gb,
+                                &qs[pairs[pi].0],
+                                &mut out[j * len..][..len],
+                            );
+                        }
+                        {
+                            let mut g = work[u].gu.lock().unwrap_or_else(|e| e.into_inner());
+                            for j in 0..users[u].len() {
+                                g[j * 2 * ff + r..][..len].copy_from_slice(&out[j * len..][..len]);
+                            }
+                        }
+                        let ordering = std::sync::atomic::Ordering::AcqRel;
+                        if work[u].left.fetch_sub(1, ordering) == 1 {
+                            // The last of this expert's gate and up rows: its hidden inputs,
+                            // then its down projection's tasks.
+                            let g = work[u].gu.lock().unwrap_or_else(|e| e.into_inner());
+                            let hidden: Vec<cpu::Q8K> = g
+                                .chunks_exact(2 * ff)
+                                .map(|g| {
+                                    let h: Vec<f32> = (0..ff)
+                                        .map(|i| {
+                                            let (a, b) = if limit > 1e-6 {
+                                                (g[i].min(limit), g[ff + i].clamp(-limit, limit))
+                                            } else {
+                                                (g[i], g[ff + i])
+                                            };
+                                            a / (1.0 + (-a).exp()) * b
+                                        })
+                                        .collect();
+                                    cpu::Q8K::new(&h)
+                                })
+                                .collect();
+                            drop(g);
+                            let _ = work[u].hidden.set(hidden);
+                            for c in 0..dchunks {
+                                sc.spawn(move |_| down_task(u, c));
+                            }
+                        }
+                    });
+                }
+            }
+        });
+        // Added in each token's chosen order (as `cpu_sum` adds them).
+        let downs: Vec<Vec<f32>> = work
+            .into_iter()
+            .map(|w| w.down.into_inner().unwrap_or_else(|e| e.into_inner()))
+            .collect();
+        let mut at = vec![(0usize, 0usize); pairs.len()];
+        for (u, us) in users.iter().enumerate() {
+            for (j, &pi) in us.iter().enumerate() {
+                at[pi] = (u, j);
             }
         }
-        for (pi, &(t, _, w)) in pairs.iter().enumerate() {
-            for (s, v) in sums[t].iter_mut().zip(&d[pi * n..][..n]) {
-                *s += w * v;
+        for (pi, &(t, _, wk)) in pairs.iter().enumerate() {
+            let (u, j) = at[pi];
+            for (s, v) in sums[t].iter_mut().zip(&downs[u][j * n..][..n]) {
+                *s += wk * v;
             }
         }
         sums

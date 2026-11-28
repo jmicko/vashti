@@ -629,4 +629,79 @@ mod tests {
             );
         }
     }
+
+    /// Throughput of the IQ2_S matvec from RAM (a buffer far past the caches) and from cache
+    /// (a small buffer swept repeatedly), all threads: compute-bound or bandwidth-bound?
+    #[test]
+    #[ignore]
+    fn bench_matvec_throughput() {
+        use rayon::prelude::*;
+        let cols = 2048;
+        let blocks = cols / QK;
+        let x: Vec<f32> = (0..cols)
+            .map(|i| ((i * 7919) % 255) as f32 / 37.0 - 3.4)
+            .collect();
+        let q = Q8K::new(&x);
+        for kind in [TensorType::Iq2S, TensorType::Iq3S, TensorType::Iq4Xs] {
+            let bb = block_bytes(kind).unwrap();
+            let row_bytes = bb * blocks;
+            let ds_row = if kind == TensorType::Iq4Xs {
+                0
+            } else {
+                2 * blocks
+            };
+            let one = random_blocks(kind, blocks * 64, 7);
+            // 64 rows in the device's layout, repeated to `total` bytes.
+            let (mut body, mut ds) = (Vec::new(), Vec::new());
+            for b in one.chunks_exact(one.len() / (blocks * 64)) {
+                if ds_row == 0 {
+                    body.extend_from_slice(b);
+                } else {
+                    ds.extend_from_slice(&b[..2]);
+                    body.extend_from_slice(&b[2..]);
+                }
+            }
+            let chunk = body.len();
+            let big_rows = (3usize << 30) / chunk;
+            let big: Vec<u8> = (0..big_rows).flat_map(|_| body.iter().copied()).collect();
+            let run = |data: &[u8], reps: usize| {
+                let t = std::time::Instant::now();
+                let tasks = data.len() / chunk * reps;
+                let total: f32 = (0..tasks)
+                    .into_par_iter()
+                    .map(|task| {
+                        let c = task % (data.len() / chunk);
+                        let mut out = [0f32; 64];
+                        matvec(
+                            kind,
+                            &data[c * chunk..][..chunk],
+                            &ds,
+                            row_bytes,
+                            &q,
+                            &mut out,
+                        );
+                        out[0]
+                    })
+                    .sum();
+                let s = t.elapsed().as_secs_f64();
+                (tasks as f64 * chunk as f64 / s / 1e9, total)
+            };
+            let _ = run(&big, 1);
+            let (ram, _) = run(&big, 1);
+            let small = &big[..chunk * 32];
+            let (cache, _) = run(small, big_rows / 32);
+            eprintln!("{kind:?}: from RAM {ram:.1} GB/s, from cache {cache:.1} GB/s");
+        }
+        // Plain reading for comparison.
+        let big = vec![1u8; 3 << 30];
+        let t = std::time::Instant::now();
+        let s: u64 = big
+            .par_chunks(1 << 20)
+            .map(|c| c.iter().map(|v| *v as u64).sum::<u64>())
+            .sum();
+        eprintln!(
+            "plain read {:.1} GB/s ({s})",
+            big.len() as f64 / t.elapsed().as_secs_f64() / 1e9
+        );
+    }
 }

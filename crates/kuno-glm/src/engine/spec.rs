@@ -416,6 +416,7 @@ impl<'m> Engine<'m> {
             if let Some(ex) = ex.get() {
                 let c: Vec<u32> = counts[il * e..][..e].iter().map(|v| v.to_bits()).collect();
                 ex.add_batch(&c, last, t);
+                note_uses(il, e, &c, ex);
             }
         }
         self.pos += t;
@@ -438,6 +439,7 @@ impl<'m> Engine<'m> {
         let mut next3: (&Buffer, u32) = (&s.zeros, 0);
         let started = std::time::Instant::now();
         let (mut wait_s, mut cpu_s) = (0f64, 0f64);
+        let (mut n_pairs, mut n_unique, mut n_gpu) = (0usize, 0usize, 0usize);
         for (il, blk) in this.blocks.iter().enumerate() {
             let c = bmix3(this, hp, &mut ops, t, cur, &blk.attn, next, next3);
             cur = Some(c);
@@ -733,6 +735,18 @@ impl<'m> Engine<'m> {
                                 .unzip()
                         })
                         .collect();
+                    {
+                        let mut u: Vec<usize> = kept
+                            .iter()
+                            .flat_map(|k| k.0.iter().copied())
+                            .filter(|e| ex.host_slot[*e].is_some())
+                            .collect();
+                        n_pairs += u.len();
+                        u.sort_unstable();
+                        u.dedup();
+                        n_unique += u.len();
+                        n_gpu += gpu_set.len();
+                    }
                     let picks: Vec<(&[usize], &[f32])> =
                         kept.iter().map(|(a, b)| (&a[..], &b[..])).collect();
                     let inputs: Vec<&[f32]> = (0..t).map(|i| &xs[i * n..][..n]).collect();
@@ -790,7 +804,7 @@ impl<'m> Engine<'m> {
         this.gpu.read_mapped(&this.token, 0, &mut tok)?;
         if std::env::var_os("KUNO_GLM_TIMING").is_some() {
             eprintln!(
-                "small batch of {t}: {:.1} ms; router waits {:.1} ms, CPU experts {:.1} ms",
+                "small batch of {t}: {:.1} ms; router waits {:.1} ms, CPU experts {:.1} ms ({n_unique} experts, {n_pairs} uses; {n_gpu} on the device)",
                 started.elapsed().as_secs_f64() * 1e3,
                 wait_s * 1e3,
                 cpu_s * 1e3
@@ -903,7 +917,11 @@ impl<'m> Engine<'m> {
             }
             let t1 = std::time::Instant::now();
             let start = self.pos;
-            let z = self.run_small(&batch, (batch.len() - 1) as u32)?;
+            let z = if self.pipelines(batch.len()) {
+                self.run_pipe(&batch, (batch.len() - 1) as u32)?
+            } else {
+                self.run_small(&batch, (batch.len() - 1) as u32)?
+            };
             stats.verify_s += t1.elapsed().as_secs_f64();
             let mut accepted = 0;
             while accepted + 1 < batch.len() && batch[accepted + 1] == z[accepted] {
@@ -967,4 +985,43 @@ fn mve_op<'a>(
         groups,
         independent: false,
     }
+}
+
+/// KUNO_GLM_TIMING: every MoE block's choices over a generation, counted (in memory
+/// only): per block [expert] (uses, uses while on the device).
+static USES: std::sync::Mutex<Vec<Vec<(u64, u64)>>> = std::sync::Mutex::new(Vec::new());
+
+pub(super) fn note_uses(il: usize, e: usize, counts: &[u32], ex: &BlockExperts) {
+    if std::env::var_os("KUNO_GLM_TIMING").is_none() {
+        return;
+    }
+    let Ok(mut u) = USES.lock() else { return };
+    if u.len() <= il {
+        u.resize(il + 1, Vec::new());
+    }
+    if u[il].len() < e {
+        u[il].resize(e, (0, 0));
+    }
+    for (k, &c) in counts.iter().enumerate().take(e) {
+        u[il][k].0 += u64::from(c);
+        if ex.host_slot[k].is_none() {
+            u[il][k].1 += u64::from(c);
+        }
+    }
+}
+
+/// The share of the noted uses the device served, and the share the `slots` most used
+/// experts of each block would have (one fixed bank for the whole generation).
+pub fn uses_report(slots: usize) -> Option<(f64, f64)> {
+    let mut u = USES.lock().ok()?;
+    let (mut all, mut served, mut best) = (0u64, 0u64, 0u64);
+    for b in u.iter() {
+        let mut c: Vec<u64> = b.iter().map(|x| x.0).collect();
+        all += c.iter().sum::<u64>();
+        served += b.iter().map(|x| x.1).sum::<u64>();
+        c.sort_unstable_by(|a, b| b.cmp(a));
+        best += c.iter().take(slots).sum::<u64>();
+    }
+    u.clear();
+    (all > 0).then(|| (served as f64 / all as f64, best as f64 / all as f64))
 }

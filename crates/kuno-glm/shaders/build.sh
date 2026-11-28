@@ -8,3 +8,4 @@ done
 for f in hcdot hcmix dsanorm idxstore idxscore idxselect route; do
     glslangValidator -V --target-env vulkan1.3 --quiet -DBATCHED -o "${f}_b.spv" "$f.comp"
 done
+glslangValidator -V --target-env vulkan1.3 --quiet -DROWS=2 -o mvr2.spv mvr.comp

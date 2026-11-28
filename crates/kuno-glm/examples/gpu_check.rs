@@ -45,6 +45,16 @@ fn main() {
         .unwrap_or(2048);
     let mut engine = Engine::new(&model, gpu, second, ctx).unwrap();
     eprintln!("engine ready in {:.1} s", t.elapsed().as_secs_f64());
+    if std::env::var_os("KUNO_GLM_SUMBENCH").is_some() {
+        engine.prefill(&ids).unwrap();
+        for per in [1, 2, 4, 8, 16] {
+            eprintln!(
+                "cpu sums, {per} experts per call: {:.1} GB/s",
+                engine.bench_cpu_sums(per, 3)
+            );
+        }
+        return;
+    }
     if let Some(count) = std::env::var("KUNO_GLM_GENERATE")
         .ok()
         .and_then(|v| v.parse::<usize>().ok())
@@ -53,14 +63,27 @@ fn main() {
         let t = std::time::Instant::now();
         let mut out = Vec::new();
         let mut first = None;
-        let stats = engine
-            .generate(&ids, count, usize::MAX, &mut |tok| {
-                if first.is_none() {
-                    first = Some(t.elapsed().as_secs_f64());
+        let stats = if std::env::var_os("KUNO_GLM_STEPWISE").is_some() {
+            // Plain greedy decoding a token at a time (`step`), for comparison.
+            let mut next = engine.prefill(&ids).unwrap();
+            first = Some(t.elapsed().as_secs_f64());
+            while out.len() < count {
+                out.push(next);
+                if out.len() < count {
+                    next = engine.step(next).unwrap();
                 }
-                out.push(tok);
-            })
-            .unwrap();
+            }
+            Default::default()
+        } else {
+            engine
+                .generate(&ids, count, usize::MAX, &mut |tok| {
+                    if first.is_none() {
+                        first = Some(t.elapsed().as_secs_f64());
+                    }
+                    out.push(tok);
+                })
+                .unwrap()
+        };
         let total = t.elapsed().as_secs_f64();
         let first = first.unwrap_or(total);
         if let Ok(p) = engine.profile.lock() {
@@ -73,6 +96,13 @@ fn main() {
                     ns / *count as f64 / 1e3
                 );
             }
+        }
+        if let Some((served, best)) = kuno_glm::engine::uses_report(engine.bank_slots()) {
+            println!(
+                "routed uses on the device: {:.1}% (the most used per block, fixed: {:.1}%)",
+                served * 100.0,
+                best * 100.0
+            );
         }
         let rest = (total - first) / (out.len().max(2) - 1) as f64;
         println!("generated ids: {:?}", &out[..out.len().min(24)]);

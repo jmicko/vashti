@@ -8,8 +8,10 @@ use crate::gpu::{Kernels, Mat, filled};
 use crate::{Matrix, Model, Result};
 
 mod batch;
+mod pipe;
 mod spec;
 pub use spec::SpecStats;
+pub use spec::uses_report;
 
 /// The engine's kernels besides the products.
 struct Extra {
@@ -44,6 +46,12 @@ struct Batched {
     mla: Kernel,
     route: Kernel,
     mm: Kernel,
+    /// mv for up to 4 tokens (a verification's batch), sums as mv's.
+    mvt: Kernel,
+    /// Q6_K for up to 4 tokens, four rows per subgroup (the inputs read a quarter as often).
+    mvr: Kernel,
+    /// mvr with two rows per subgroup (matrices of few rows).
+    mvr2: Kernel,
     /// The cooperative-matrix products (Intel Xe2's half-precision shape): dense and experts.
     /// Without them a prompt runs a token at a time.
     mmc: Option<Kernel>,
@@ -216,6 +224,9 @@ pub struct Engine<'m> {
     trades: std::sync::Mutex<Vec<experts::Trade>>,
     /// With KUNO_GLM_PROFILE: device time per kernel (and product shape), ns and count.
     pub profile: std::sync::Mutex<std::collections::BTreeMap<String, (f64, u32)>>,
+    /// Lanes for pipelined verifications (tokens after the first; the first is `step`'s).
+    lanes: Vec<LaneBufs>,
+    lane_maps: Vec<Mapped>,
     /// Seconds in the CPU's sums and in waiting for the second device, this token.
     split: std::sync::Mutex<[f64; 2]>,
 }
@@ -307,6 +318,9 @@ impl<'m> Engine<'m> {
                 mlac: kernel(include_bytes!("../shaders/mlac.spv"), 2, 4)?,
                 route: kernel(include_bytes!("../shaders/route_b.spv"), 5, 3)?,
                 mm: kernel(include_bytes!("../shaders/mm.spv"), 4, 12)?,
+                mvt: kernel(include_bytes!("../shaders/mvt.spv"), 4, 12)?,
+                mvr: kernel(include_bytes!("../shaders/mvr.spv"), 4, 12)?,
+                mvr2: kernel(include_bytes!("../shaders/mvr2.spv"), 4, 12)?,
                 mmc: if gpu.has_half8() && k.lanes == 16 {
                     Some(kernel(include_bytes!("../shaders/mmc.spv"), 4, 10)?)
                 } else {
@@ -468,31 +482,10 @@ impl<'m> Engine<'m> {
             .unwrap_or(2048usize)
             .clamp(1, 4096)
             .next_multiple_of(8);
-        let buf = |floats: usize| gpu.buffer((floats * batch * 4) as u64);
         let used = hp.experts_used;
         let lp = batch * used + 8 * hp.experts;
-        let s = Scratch {
-            x: [buf(4 * n)?, buf(4 * n)?],
-            part: buf(32 * 32)?,
-            coef: buf(32)?,
-            normed: buf(n)?,
-            a: buf(3 * hp.kda_head * hp.heads)?,
-            b: buf(hp.heads * hp.kv_lora.max(2 * hp.kda_head))?,
-            c: buf(hp.heads * hp.kv_lora)?,
-            out: buf(hp.ff.max(2 * hp.ff_shared) * 2)?,
-            logits: gpu.buffer((hp.vocab * 4) as u64)?,
-            // A batch's assignments by expert, each expert's run padded to 8 (group.comp).
-            ge: gpu.buffer((lp * 2 * hp.ff_expert * 4) as u64)?,
-            gh: gpu.buffer((lp * hp.ff_expert * 4) as u64)?,
-            gd: gpu.buffer((lp * n * 4) as u64)?,
-            zeros: floats(&gpu, &vec![0f32; n])?,
-            routed: buf(2 * used)?,
-            ia: buf(256 + 32)?,
-            ib: buf(32 * 128)?,
-            iscore: buf((max_positions / 4).max(4))?,
-            iidx: buf(hp.indexer_top_k + hp.indexer_kpool)?,
-            lists: gpu.buffer(((2 * hp.experts + 2 * lp) * 4) as u64)?,
-        };
+        let s = Scratch::new(&gpu, hp, batch, lp, max_positions)?;
+        let buf = |floats: usize| gpu.buffer((floats * batch * 4) as u64);
         let output = up(&m("output.weight")?)?;
         // Speculation: KUNO_GLM_SPEC drafts per step (default 2; 0 for none) with the NextN
         // block, when the file has it; per KDA block snapshots for that many tokens.
@@ -662,7 +655,27 @@ impl<'m> Engine<'m> {
             }
             v
         };
+        // KUNO_GLM_PIPE=1: pipelined verifications (`pipe`), a lane per draft beside
+        // `step`'s own (~100 MB each). Exactly `step`'s results, but slower than the batched
+        // verification where the host's memory bandwidth bounds the CPU's experts.
+        let lanes = if mtp.is_some() && std::env::var("KUNO_GLM_PIPE").is_ok_and(|v| v == "1") {
+            (0..drafts)
+                .map(|_| LaneBufs::new(&gpu, hp, max_positions))
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
+        // Per lane (the first too), the staging slot of each expert the device takes.
+        let lane_maps = if lanes.is_empty() {
+            Vec::new()
+        } else {
+            (0..=drafts)
+                .map(|_| gpu.mapped((hp.experts * 4) as u64))
+                .collect::<std::result::Result<Vec<_>, _>>()?
+        };
         Ok(Self {
+            lanes,
+            lane_maps,
             out_norm: floats(&gpu, &v("output_norm.weight")?)?,
             output,
             experts,
@@ -722,6 +735,11 @@ impl<'m> Engine<'m> {
         })
     }
 
+    /// Device bank slots per MoE block.
+    pub fn bank_slots(&self) -> usize {
+        self.slots1
+    }
+
     /// Runs `token` at the next position; returns the most likely next token.
     pub fn step(&mut self, token: u32) -> Result<u32> {
         self.load_all()?;
@@ -743,6 +761,12 @@ impl<'m> Engine<'m> {
         let mut pending: Vec<Passing> = Vec::new();
         let this = &*self;
         let s = &this.s;
+        let lane = Lane {
+            s,
+            host_x: &this.host_x,
+            route: &this.route,
+            cpu_out: &this.cpu_out,
+        };
         let hpr = &hp;
         let mut traces = Vec::new();
         // Seconds waiting for the router, in the CPU's experts.
@@ -754,7 +778,7 @@ impl<'m> Engine<'m> {
         for (il, blk) in this.blocks.iter().enumerate() {
             // The attention mixer (applying the previous block's FFN mixer first).
             let c = mix(
-                this, hpr, &mut ops, next_o3, cur, &blk.attn, next_mode, next_o,
+                this, lane, hpr, &mut ops, next_o3, cur, &blk.attn, next_mode, next_o,
             );
             cur = Some(c);
             if this.trace.is_some() && il > 0 {
@@ -765,279 +789,23 @@ impl<'m> Engine<'m> {
                 }
                 traces.push(self_mean(&this.gpu, &s.x[c], n)?);
             }
-            match &blk.attention {
-                Attention::Kda {
-                    qkv,
-                    small,
-                    fg_b,
-                    conv,
-                    params,
-                    out,
-                    hist,
-                    state,
-                } => {
-                    let d = hp.kda_head * hp.heads;
-                    mv(
-                        this,
-                        &mut ops,
-                        qkv,
-                        &s.normed,
-                        0,
-                        &s.a,
-                        0,
-                        qkv.constants(0, 0, false),
-                        true,
-                    );
-                    mv(
-                        this,
-                        &mut ops,
-                        small,
-                        &s.normed,
-                        0,
-                        &s.c,
-                        0,
-                        small.constants(0, 0, false),
-                        false,
-                    );
-                    // f_b on f_a's 128, g_b on g_a's 128 (one product, two input groups):
-                    // fg [f | gate] in b.
-                    mv(
-                        this,
-                        &mut ops,
-                        fg_b,
-                        &s.c,
-                        0,
-                        &s.b,
-                        0,
-                        fg_b.grouped(0, 0, d, 128),
-                        false,
-                    );
-                    ops.push(Op {
-                        kernel: &this.e.kda,
-                        buffers: vec![&s.a, conv, hist, &s.b, &s.c, params, state, &s.out],
-                        constants: vec![d as u32, f(hp.gate_lower_bound), f(hp.rms_eps), 256],
-                        groups: [hp.heads as u32, 1, 1],
-                        independent: false,
-                    });
-                    mv(
-                        this,
-                        &mut ops,
-                        out,
-                        &s.out,
-                        0,
-                        &s.a,
-                        0,
-                        out.constants(0, 0, false),
-                        false,
-                    );
-                }
-                Attention::Dsa {
-                    q_a,
-                    kv_a,
-                    norms,
-                    q_b,
-                    k_b,
-                    v_b,
-                    out,
-                    latents,
-                    idx_kg,
-                    idx_proj,
-                    idx_qb,
-                    idx_params,
-                    idx_keys,
-                    idx_pooled,
-                } => {
-                    let (ql, lora) = (hp.q_lora, hp.kv_lora);
-                    // The indexer's key|gate and head weights, from the block's input.
-                    mv(
-                        this,
-                        &mut ops,
-                        idx_kg,
-                        &s.normed,
-                        0,
-                        &s.ia,
-                        0,
-                        idx_kg.constants(0, 0, false),
-                        true,
-                    );
-                    let mut pc = idx_proj.constants(0, 256, false);
-                    pc[6] |= 4;
-                    mv(this, &mut ops, idx_proj, &s.normed, 0, &s.ia, 256, pc, true);
-                    mv(
-                        this,
-                        &mut ops,
-                        q_a,
-                        &s.normed,
-                        0,
-                        &s.c,
-                        0,
-                        q_a.constants(0, 0, false),
-                        true,
-                    );
-                    mv(
-                        this,
-                        &mut ops,
-                        kv_a,
-                        &s.normed,
-                        0,
-                        &s.c,
-                        ql,
-                        kv_a.constants(0, ql, false),
-                        false,
-                    );
-                    ops.push(Op {
-                        kernel: &this.e.dsanorm,
-                        buffers: vec![&s.c, norms, &s.out, latents],
-                        constants: vec![ql as u32, lora as u32, this.pos as u32, f(hp.rms_eps)],
-                        groups: [1, 1, 1],
-                        independent: false,
-                    });
-                    ops.push(Op {
-                        kernel: &this.e.idxstore,
-                        buffers: vec![&s.ia, idx_params, idx_keys, idx_pooled],
-                        constants: vec![this.pos as u32, f(1e-6)],
-                        groups: [1, 1, 1],
-                        independent: false,
-                    });
-                    // Past top_k + kpool - 1 positions the indexer chooses the pools attended.
-                    let kpool = hp.indexer_kpool;
-                    let pools = (this.pos + 1) / kpool;
-                    let keep = hp.indexer_top_k / kpool;
-                    let indexed = pools > keep;
-                    let ntail = this.pos + 1 - pools * kpool;
-                    if indexed {
-                        mv(
-                            this,
-                            &mut ops,
-                            idx_qb,
-                            &s.out,
-                            0,
-                            &s.ib,
-                            0,
-                            idx_qb.constants(0, 0, false),
-                            false,
-                        );
-                        ops.push(Op {
-                            kernel: &this.e.idxscore,
-                            buffers: vec![&s.ib, &s.ia, idx_pooled, &s.iscore],
-                            constants: vec![pools as u32, f(1.0 / ((128 * 32) as f32).sqrt()), 256],
-                            groups: [(pools as u32).div_ceil(128), 1, 1],
-                            independent: false,
-                        });
-                        ops.push(Op {
-                            kernel: &this.e.idxselect,
-                            buffers: vec![&s.iscore, &s.iidx],
-                            constants: vec![
-                                pools as u32,
-                                keep as u32,
-                                (pools * kpool) as u32,
-                                ntail as u32,
-                            ],
-                            groups: [1, 1, 1],
-                            independent: false,
-                        });
-                    }
-                    let count = if indexed {
-                        keep * kpool + ntail
-                    } else {
-                        this.pos + 1
-                    };
-                    // q [heads][qk] in a; absorbed [heads][lora] in b; mixed in c; heads' values in out.
-                    mv(
-                        this,
-                        &mut ops,
-                        q_b,
-                        &s.out,
-                        0,
-                        &s.a,
-                        0,
-                        q_b.constants(0, 0, false),
-                        false,
-                    );
-                    mv(
-                        this,
-                        &mut ops,
-                        k_b,
-                        &s.a,
-                        0,
-                        &s.b,
-                        0,
-                        k_b.grouped(0, 0, lora, hp.qk_head),
-                        false,
-                    );
-                    ops.push(Op {
-                        kernel: &this.e.mla,
-                        buffers: vec![&s.b, latents, &s.c, &s.iidx],
-                        constants: vec![
-                            lora as u32,
-                            count as u32,
-                            f(1.0 / (hp.qk_head as f32).sqrt()),
-                            indexed as u32,
-                        ],
-                        groups: [hp.heads as u32, 1, 1],
-                        independent: false,
-                    });
-                    mv(
-                        this,
-                        &mut ops,
-                        v_b,
-                        &s.c,
-                        0,
-                        &s.out,
-                        0,
-                        v_b.grouped(0, 0, hp.v_head, lora),
-                        false,
-                    );
-                    mv(
-                        this,
-                        &mut ops,
-                        out,
-                        &s.out,
-                        0,
-                        &s.a,
-                        0,
-                        out.constants(0, 0, false),
-                        false,
-                    );
-                }
-            }
+            one_attention(this, lane, &mut ops, &blk.attention, this.pos);
             // The FFN mixer, applying the attention's (output in a).
-            let c = mix(this, hpr, &mut ops, next_o3, cur, &blk.ffn_mixer, 1, &s.a);
+            let c = mix(
+                this,
+                lane,
+                hpr,
+                &mut ops,
+                next_o3,
+                cur,
+                &blk.ffn_mixer,
+                1,
+                &s.a,
+            );
             cur = Some(c);
             match &blk.ffn {
                 Ffn::Dense { gu, down } => {
-                    let ff = gu.rows / 2;
-                    mv(
-                        this,
-                        &mut ops,
-                        gu,
-                        &s.normed,
-                        0,
-                        &s.out,
-                        0,
-                        gu.constants(0, 0, false),
-                        false,
-                    );
-                    ops.push(Op {
-                        kernel: &this.e.glu,
-                        buffers: vec![&s.out, &s.b],
-                        constants: vec![ff as u32, f(hp.clamp_shared[il]), 1],
-                        groups: [(ff as u32).div_ceil(256), 1, 1],
-                        independent: false,
-                    });
-                    mv(
-                        this,
-                        &mut ops,
-                        down,
-                        &s.b,
-                        0,
-                        &s.a,
-                        0,
-                        down.constants(0, 0, false),
-                        false,
-                    );
-                    next_mode = 1;
-                    next_o = &s.a;
+                    (next_mode, next_o) = one_dense(this, lane, &mut ops, il, gu, down);
                 }
                 Ffn::Moe {
                     router,
@@ -1045,122 +813,10 @@ impl<'m> Engine<'m> {
                     gu,
                     down,
                 } => {
-                    mv(
-                        this,
-                        &mut ops,
-                        router,
-                        &s.normed,
-                        0,
-                        &s.c,
-                        0,
-                        {
-                            // Few rows: a whole workgroup per row.
-                            let mut c = router.constants(0, 0, false);
-                            c[6] |= 4;
-                            c
-                        },
-                        false,
-                    );
-                    ops.push(Op {
-                        kernel: &this.e.route,
-                        buffers: vec![&s.c, bias, &s.normed, this.route.buffer(), &s.routed],
-                        constants: vec![
-                            hp.experts as u32,
-                            hp.experts_used as u32,
-                            f(hp.expert_scale),
-                            n as u32,
-                            seq(this.pos, il),
-                        ],
-                        groups: [1, 1, 1],
-                        independent: false,
-                    });
+                    one_router(this, lane, &mut ops, il, router, bias, this.pos);
                     let routed = submit(this, &mut ops)?;
-                    // The shared expert, queued behind the router while the CPU works.
-                    let ff = gu.rows / 2;
-                    mv(
-                        this,
-                        &mut ops,
-                        gu,
-                        &s.normed,
-                        0,
-                        &s.out,
-                        0,
-                        gu.constants(0, 0, false),
-                        false,
-                    );
-                    ops.push(Op {
-                        kernel: &this.e.glu,
-                        buffers: vec![&s.out, &s.b],
-                        constants: vec![ff as u32, f(hp.clamp_shared[il]), 1],
-                        groups: [(ff as u32).div_ceil(256), 1, 1],
-                        independent: false,
-                    });
-                    mv(
-                        this,
-                        &mut ops,
-                        down,
-                        &s.b,
-                        0,
-                        &s.a,
-                        0,
-                        down.constants(0, 0, false),
-                        false,
-                    );
+                    one_back(this, lane, &mut ops, il, gu, down)?;
                     let ex = this.experts[il].get().ok_or("model_state_invalid")?;
-                    if let Some(pool) = &ex.device {
-                        let (ff, used) = (hp.ff_expert, hp.experts_used);
-                        let rpg = 128 / this.k.lanes;
-                        let gk = experts::kind(ex.gate_kind)?;
-                        let dk = experts::kind(ex.down_kind)?;
-                        ops.push(Op {
-                            kernel: &this.e.mve,
-                            buffers: vec![
-                                &pool.gu_w,
-                                &pool.gu_s,
-                                &s.normed,
-                                &s.ge,
-                                &s.routed,
-                                &pool.slots,
-                                &this.e.tables,
-                            ],
-                            constants: vec![
-                                0,
-                                gk,
-                                (2 * ff) as u32,
-                                n as u32,
-                                used as u32,
-                                0,
-                                0,
-                                0,
-                                0,
-                                0,
-                            ],
-                            groups: [((2 * ff) as u32).div_ceil(rpg), used as u32, 1],
-                            independent: false,
-                        });
-                        ops.push(Op {
-                            kernel: &this.e.glu,
-                            buffers: vec![&s.ge, &s.gh],
-                            constants: vec![ff as u32, f(hp.clamp_expert[il]), used as u32],
-                            groups: [((used * ff) as u32).div_ceil(256), 1, 1],
-                            independent: false,
-                        });
-                        ops.push(Op {
-                            kernel: &this.e.mve,
-                            buffers: vec![
-                                &pool.down_w,
-                                &pool.down_s,
-                                &s.gh,
-                                &s.gd,
-                                &s.routed,
-                                &pool.slots,
-                                &this.e.tables,
-                            ],
-                            constants: vec![1, dk, n as u32, ff as u32, used as u32, 0, 0, 0, 0, 0],
-                            groups: [(n as u32).div_ceil(rpg), 1, 1],
-                            independent: false,
-                        });
-                    }
                     pending.push(submit(this, &mut ops)?);
                     let t = std::time::Instant::now();
                     this.await_route(seq(this.pos, il), routed, &mut pending)?;
@@ -1196,7 +852,9 @@ impl<'m> Engine<'m> {
         }
         // The last block's FFN mixer (with any block's product, unused), the norm, the head.
         let last = &this.blocks[0].attn;
-        let c = mix(this, hpr, &mut ops, next_o3, cur, last, next_mode, next_o);
+        let c = mix(
+            this, lane, hpr, &mut ops, next_o3, cur, last, next_mode, next_o,
+        );
         if this.trace.is_some() {
             pending.push(submit(this, &mut ops)?);
             for p in pending.drain(..) {
@@ -1493,6 +1151,513 @@ impl<'m> Engine<'m> {
     }
 }
 
+/// One token's buffers: its scratch, its embedding (x4), the router's choice for the host
+/// and the CPU's expert sum (`step`'s own, or a lane of a pipelined verification).
+#[derive(Clone, Copy)]
+struct Lane<'a> {
+    s: &'a Scratch,
+    host_x: &'a Mapped,
+    route: &'a Mapped,
+    cpu_out: &'a Mapped,
+}
+
+/// A lane's own buffers (one token's scratch).
+struct LaneBufs {
+    s: Scratch,
+    host_x: Mapped,
+    route: Mapped,
+    cpu_out: Mapped,
+}
+
+impl Scratch {
+    /// Scratch for `batch` tokens; `lp` the expert products' rows (assignments).
+    fn new(
+        gpu: &Gpu,
+        hp: &crate::Hparams,
+        batch: usize,
+        lp: usize,
+        max_positions: usize,
+    ) -> Result<Self> {
+        let n = hp.embd;
+        let buf = |floats: usize| gpu.buffer((floats * batch * 4) as u64);
+        let used = hp.experts_used;
+        Ok(Scratch {
+            x: [buf(4 * n)?, buf(4 * n)?],
+            part: buf(32 * 32)?,
+            coef: buf(32)?,
+            normed: buf(n)?,
+            a: buf(3 * hp.kda_head * hp.heads)?,
+            b: buf(hp.heads * hp.kv_lora.max(2 * hp.kda_head))?,
+            c: buf(hp.heads * hp.kv_lora)?,
+            out: buf(hp.ff.max(2 * hp.ff_shared) * 2)?,
+            logits: gpu.buffer((hp.vocab * 4) as u64)?,
+            // A batch's assignments by expert, each expert's run padded to 8 (group.comp).
+            ge: gpu.buffer((lp * 2 * hp.ff_expert * 4) as u64)?,
+            gh: gpu.buffer((lp * hp.ff_expert * 4) as u64)?,
+            gd: gpu.buffer((lp * n * 4) as u64)?,
+            zeros: floats(gpu, &vec![0f32; n])?,
+            routed: buf(2 * used)?,
+            ia: buf(256 + 32)?,
+            ib: buf(32 * 128)?,
+            iscore: buf((max_positions / 4).max(4))?,
+            iidx: buf(hp.indexer_top_k + hp.indexer_kpool)?,
+            lists: gpu.buffer(((2 * hp.experts + 2 * lp) * 4) as u64)?,
+        })
+    }
+}
+
+impl LaneBufs {
+    /// One token's lane (a pipelined verification's).
+    fn new(gpu: &Gpu, hp: &crate::Hparams, max_positions: usize) -> Result<Self> {
+        let n = hp.embd;
+        Ok(Self {
+            s: Scratch::new(gpu, hp, 1, hp.experts_used, max_positions)?,
+            host_x: gpu.mapped((4 * n * 4) as u64)?,
+            route: gpu.mapped(((2 * hp.experts_used + n + 4) * 4) as u64)?,
+            cpu_out: gpu.mapped((n * 4) as u64)?,
+        })
+    }
+}
+
+impl LaneBufs {
+    fn lane(&self) -> Lane<'_> {
+        Lane {
+            s: &self.s,
+            host_x: &self.host_x,
+            route: &self.route,
+            cpu_out: &self.cpu_out,
+        }
+    }
+}
+
+/// One token's attention (at `pos`) from `s.normed`, its output in `s.a`.
+fn one_attention<'a>(
+    this: &'a Engine,
+    lane: Lane<'a>,
+    ops: &mut Vec<Op<'a>>,
+    attention: &'a Attention,
+    pos: usize,
+) {
+    let hp = &this.model.hp;
+    let s = lane.s;
+    match attention {
+        Attention::Kda {
+            qkv,
+            small,
+            fg_b,
+            conv,
+            params,
+            out,
+            hist,
+            state,
+        } => {
+            let d = hp.kda_head * hp.heads;
+            mv(
+                this,
+                ops,
+                qkv,
+                &s.normed,
+                0,
+                &s.a,
+                0,
+                qkv.constants(0, 0, false),
+                true,
+            );
+            mv(
+                this,
+                ops,
+                small,
+                &s.normed,
+                0,
+                &s.c,
+                0,
+                small.constants(0, 0, false),
+                false,
+            );
+            // f_b on f_a's 128, g_b on g_a's 128 (one product, two input groups):
+            // fg [f | gate] in b.
+            mv(
+                this,
+                ops,
+                fg_b,
+                &s.c,
+                0,
+                &s.b,
+                0,
+                fg_b.grouped(0, 0, d, 128),
+                false,
+            );
+            ops.push(Op {
+                kernel: &this.e.kda,
+                buffers: vec![&s.a, conv, hist, &s.b, &s.c, params, state, &s.out],
+                constants: vec![d as u32, f(hp.gate_lower_bound), f(hp.rms_eps), 256],
+                groups: [hp.heads as u32, 1, 1],
+                independent: false,
+            });
+            mv(
+                this,
+                ops,
+                out,
+                &s.out,
+                0,
+                &s.a,
+                0,
+                out.constants(0, 0, false),
+                false,
+            );
+        }
+        Attention::Dsa {
+            q_a,
+            kv_a,
+            norms,
+            q_b,
+            k_b,
+            v_b,
+            out,
+            latents,
+            idx_kg,
+            idx_proj,
+            idx_qb,
+            idx_params,
+            idx_keys,
+            idx_pooled,
+        } => {
+            let (ql, lora) = (hp.q_lora, hp.kv_lora);
+            // The indexer's key|gate and head weights, from the block's input.
+            mv(
+                this,
+                ops,
+                idx_kg,
+                &s.normed,
+                0,
+                &s.ia,
+                0,
+                idx_kg.constants(0, 0, false),
+                true,
+            );
+            let mut pc = idx_proj.constants(0, 256, false);
+            pc[6] |= 4;
+            mv(this, ops, idx_proj, &s.normed, 0, &s.ia, 256, pc, true);
+            mv(
+                this,
+                ops,
+                q_a,
+                &s.normed,
+                0,
+                &s.c,
+                0,
+                q_a.constants(0, 0, false),
+                true,
+            );
+            mv(
+                this,
+                ops,
+                kv_a,
+                &s.normed,
+                0,
+                &s.c,
+                ql,
+                kv_a.constants(0, ql, false),
+                false,
+            );
+            ops.push(Op {
+                kernel: &this.e.dsanorm,
+                buffers: vec![&s.c, norms, &s.out, latents],
+                constants: vec![ql as u32, lora as u32, pos as u32, f(hp.rms_eps)],
+                groups: [1, 1, 1],
+                independent: false,
+            });
+            ops.push(Op {
+                kernel: &this.e.idxstore,
+                buffers: vec![&s.ia, idx_params, idx_keys, idx_pooled],
+                constants: vec![pos as u32, f(1e-6)],
+                groups: [1, 1, 1],
+                independent: false,
+            });
+            // Past top_k + kpool - 1 positions the indexer chooses the pools attended.
+            let kpool = hp.indexer_kpool;
+            let pools = (pos + 1) / kpool;
+            let keep = hp.indexer_top_k / kpool;
+            let indexed = pools > keep;
+            let ntail = pos + 1 - pools * kpool;
+            if indexed {
+                mv(
+                    this,
+                    ops,
+                    idx_qb,
+                    &s.out,
+                    0,
+                    &s.ib,
+                    0,
+                    idx_qb.constants(0, 0, false),
+                    false,
+                );
+                ops.push(Op {
+                    kernel: &this.e.idxscore,
+                    buffers: vec![&s.ib, &s.ia, idx_pooled, &s.iscore],
+                    constants: vec![pools as u32, f(1.0 / ((128 * 32) as f32).sqrt()), 256],
+                    groups: [(pools as u32).div_ceil(128), 1, 1],
+                    independent: false,
+                });
+                ops.push(Op {
+                    kernel: &this.e.idxselect,
+                    buffers: vec![&s.iscore, &s.iidx],
+                    constants: vec![
+                        pools as u32,
+                        keep as u32,
+                        (pools * kpool) as u32,
+                        ntail as u32,
+                    ],
+                    groups: [1, 1, 1],
+                    independent: false,
+                });
+            }
+            let count = if indexed {
+                keep * kpool + ntail
+            } else {
+                pos + 1
+            };
+            // q [heads][qk] in a; absorbed [heads][lora] in b; mixed in c; heads' values in out.
+            mv(
+                this,
+                ops,
+                q_b,
+                &s.out,
+                0,
+                &s.a,
+                0,
+                q_b.constants(0, 0, false),
+                false,
+            );
+            mv(
+                this,
+                ops,
+                k_b,
+                &s.a,
+                0,
+                &s.b,
+                0,
+                k_b.grouped(0, 0, lora, hp.qk_head),
+                false,
+            );
+            ops.push(Op {
+                kernel: &this.e.mla,
+                buffers: vec![&s.b, latents, &s.c, &s.iidx],
+                constants: vec![
+                    lora as u32,
+                    count as u32,
+                    f(1.0 / (hp.qk_head as f32).sqrt()),
+                    indexed as u32,
+                ],
+                groups: [hp.heads as u32, 1, 1],
+                independent: false,
+            });
+            mv(
+                this,
+                ops,
+                v_b,
+                &s.c,
+                0,
+                &s.out,
+                0,
+                v_b.grouped(0, 0, hp.v_head, lora),
+                false,
+            );
+            mv(
+                this,
+                ops,
+                out,
+                &s.out,
+                0,
+                &s.a,
+                0,
+                out.constants(0, 0, false),
+                false,
+            );
+        }
+    }
+}
+
+/// One token's dense FFN from `s.normed`: the next mixer's mode and output.
+fn one_dense<'a>(
+    this: &'a Engine,
+    lane: Lane<'a>,
+    ops: &mut Vec<Op<'a>>,
+    il: usize,
+    gu: &'a Mat,
+    down: &'a Mat,
+) -> (u32, &'a Buffer) {
+    let hp = &this.model.hp;
+    let s = lane.s;
+    let ff = gu.rows / 2;
+    mv(
+        this,
+        ops,
+        gu,
+        &s.normed,
+        0,
+        &s.out,
+        0,
+        gu.constants(0, 0, false),
+        false,
+    );
+    ops.push(Op {
+        kernel: &this.e.glu,
+        buffers: vec![&s.out, &s.b],
+        constants: vec![ff as u32, f(hp.clamp_shared[il]), 1],
+        groups: [(ff as u32).div_ceil(256), 1, 1],
+        independent: false,
+    });
+    mv(
+        this,
+        ops,
+        down,
+        &s.b,
+        0,
+        &s.a,
+        0,
+        down.constants(0, 0, false),
+        false,
+    );
+    (1, &s.a)
+}
+
+/// One token's router (at `pos`) into `lane.route` (its seq last) and `s.routed`.
+#[allow(clippy::too_many_arguments)]
+fn one_router<'a>(
+    this: &'a Engine,
+    lane: Lane<'a>,
+    ops: &mut Vec<Op<'a>>,
+    il: usize,
+    router: &'a Mat,
+    bias: &'a Buffer,
+    pos: usize,
+) {
+    let hp = &this.model.hp;
+    let s = lane.s;
+    let n = hp.embd;
+    mv(
+        this,
+        ops,
+        router,
+        &s.normed,
+        0,
+        &s.c,
+        0,
+        {
+            // Few rows: a whole workgroup per row.
+            let mut c = router.constants(0, 0, false);
+            c[6] |= 4;
+            c
+        },
+        false,
+    );
+    ops.push(Op {
+        kernel: &this.e.route,
+        buffers: vec![&s.c, bias, &s.normed, lane.route.buffer(), &s.routed],
+        constants: vec![
+            hp.experts as u32,
+            hp.experts_used as u32,
+            f(hp.expert_scale),
+            n as u32,
+            seq(pos, il),
+        ],
+        groups: [1, 1, 1],
+        independent: false,
+    });
+}
+
+/// One token's shared expert (into `s.a`) and the device's bank of block `il` (into
+/// `s.gd`, returned; zeros without a bank).
+fn one_back<'a>(
+    this: &'a Engine,
+    lane: Lane<'a>,
+    ops: &mut Vec<Op<'a>>,
+    il: usize,
+    gu: &'a Mat,
+    down: &'a Mat,
+) -> Result<&'a Buffer> {
+    let hp = &this.model.hp;
+    let s = lane.s;
+    let n = hp.embd;
+    // The shared expert, queued behind the router while the CPU works.
+    let ff = gu.rows / 2;
+    mv(
+        this,
+        ops,
+        gu,
+        &s.normed,
+        0,
+        &s.out,
+        0,
+        gu.constants(0, 0, false),
+        false,
+    );
+    ops.push(Op {
+        kernel: &this.e.glu,
+        buffers: vec![&s.out, &s.b],
+        constants: vec![ff as u32, f(hp.clamp_shared[il]), 1],
+        groups: [(ff as u32).div_ceil(256), 1, 1],
+        independent: false,
+    });
+    mv(
+        this,
+        ops,
+        down,
+        &s.b,
+        0,
+        &s.a,
+        0,
+        down.constants(0, 0, false),
+        false,
+    );
+    let ex = this.experts[il].get().ok_or("model_state_invalid")?;
+    if let Some(pool) = &ex.device {
+        let (ff, used) = (hp.ff_expert, hp.experts_used);
+        let rpg = 128 / this.k.lanes;
+        let gk = experts::kind(ex.gate_kind)?;
+        let dk = experts::kind(ex.down_kind)?;
+        ops.push(Op {
+            kernel: &this.e.mve,
+            buffers: vec![
+                &pool.gu_w,
+                &pool.gu_s,
+                &s.normed,
+                &s.ge,
+                &s.routed,
+                &pool.slots,
+                &this.e.tables,
+            ],
+            constants: vec![0, gk, (2 * ff) as u32, n as u32, used as u32, 0, 0, 0, 0, 0],
+            groups: [((2 * ff) as u32).div_ceil(rpg), used as u32, 1],
+            independent: false,
+        });
+        ops.push(Op {
+            kernel: &this.e.glu,
+            buffers: vec![&s.ge, &s.gh],
+            constants: vec![ff as u32, f(hp.clamp_expert[il]), used as u32],
+            groups: [((used * ff) as u32).div_ceil(256), 1, 1],
+            independent: false,
+        });
+        ops.push(Op {
+            kernel: &this.e.mve,
+            buffers: vec![
+                &pool.down_w,
+                &pool.down_s,
+                &s.gh,
+                &s.gd,
+                &s.routed,
+                &pool.slots,
+                &this.e.tables,
+            ],
+            constants: vec![1, dk, n as u32, ff as u32, used as u32, 0, 0, 0, 0, 0],
+            groups: [(n as u32).div_ceil(rpg), 1, 1],
+            independent: false,
+        });
+    }
+    Ok(if ex.device.is_some() { &s.gd } else { &s.zeros })
+}
+
 /// Records `m x` (constants `c`) into `y`.
 #[allow(clippy::too_many_arguments)]
 fn mv<'a>(
@@ -1525,6 +1690,7 @@ fn mv<'a>(
 #[allow(clippy::too_many_arguments)]
 fn mix<'a>(
     this: &'a Engine,
+    lane: Lane<'a>,
     hp: &crate::Hparams,
     ops: &mut Vec<Op<'a>>,
     o3: &'a Buffer,
@@ -1533,10 +1699,10 @@ fn mix<'a>(
     mode: u32,
     o: &'a Buffer,
 ) -> usize {
-    let s = &this.s;
+    let s = lane.s;
     let n = hp.embd;
     let (src, dst) = match cur {
-        None => (this.host_x.buffer(), 0),
+        None => (lane.host_x.buffer(), 0),
         Some(i) => (&s.x[i], 1 - i),
     };
     let mode = if cur.is_none() { 3 } else { mode };
@@ -1552,7 +1718,7 @@ fn mix<'a>(
             &s.coef,
             o,
             xn,
-            this.cpu_out.buffer(),
+            lane.cpu_out.buffer(),
             o3,
         ],
         constants: vec![n as u32, mode, 0],
@@ -1610,6 +1776,9 @@ fn submit<'a>(this: &'a Engine, ops: &mut Vec<Op<'a>>) -> Result<Passing> {
             (&e.b.mla, "mla_b"),
             (&e.b.route, "route_b"),
             (&e.b.mm, "mm"),
+            (&e.b.mvt, "mvt"),
+            (&e.b.mvr, "mvr"),
+            (&e.b.mvr2, "mvr2"),
             (e.b.mmc.as_ref().unwrap_or(&e.b.mm), "mmc"),
             (e.b.mec.as_ref().unwrap_or(&e.b.mm), "mec"),
             (&e.b.group, "group"),
@@ -1640,8 +1809,8 @@ fn submit<'a>(this: &'a Engine, ops: &mut Vec<Op<'a>>) -> Result<Passing> {
                     o.constants[0], o.constants[1], o.constants[2]
                 ),
                 "mve" => format!("mve mode {} kind {}", o.constants[0], o.constants[1]),
-                "mm" => format!(
-                    "mm {}x{} kind {} x{}",
+                "mm" | "mvt" | "mvr" | "mvr2" => format!(
+                    "{name} {}x{} kind {} x{}",
                     o.constants[0], o.constants[1], o.constants[2], o.constants[11]
                 ),
                 "mmc" => format!(
